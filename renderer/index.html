@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>浏览器多实例管理器</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>浏览器多实例管理器</h1>
+    </header>
+
+    <section class="add-profile-section">
+      <h2>添加新配置</h2>
+      <form id="addProfileForm">
+        <div class="form-group">
+          <label for="browserType">浏览器:</label>
+          <select id="browserType" required>
+            <option value="chrome">Google Chrome</option>
+            <option value="firefox">Firefox</option>
+            <option value="edge">Microsoft Edge</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="profileName">配置名称:</label>
+          <input type="text" id="profileName" placeholder="例如: 工作, 个人" required>
+        </div>
+        <button type="submit" class="btn btn-primary">添加配置</button>
+      </form>
+    </section>
+
+    <section class="profiles-section">
+      <h2>已保存的配置</h2>
+      <div id="profilesList" class="profiles-list">
+        <p class="empty-message">暂无配置，请在上方添加</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- 重命名弹窗 -->
+  <div id="renameModal" class="modal">
+    <div class="modal-content">
+      <h3>重命名配置</h3>
+      <div class="form-group">
+        <label for="newProfileName">新名称:</label>
+        <input type="text" id="newProfileName" required>
+      </div>
+      <div class="modal-actions">
+        <button id="confirmRename" class="btn btn-primary">确认</button>
+        <button id="cancelRename" class="btn btn-secondary">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

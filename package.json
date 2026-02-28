@@ -1,0 +1,22 @@
+{
+  "name": "browser-multi-instance-manager",
+  "version": "1.0.0",
+  "description": "Browser multi-instance management desktop application",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": [
+    "electron",
+    "browser",
+    "multi-instance"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "electron-store": "^8.1.0"
+  },
+  "devDependencies": {
+    "electron": "^40.6.1"
+  }
+}
