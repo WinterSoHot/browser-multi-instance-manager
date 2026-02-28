@@ -25,6 +25,7 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
+    "publish": "never",
     "appId": "com.browser.multinstance.manager",
     "productName": "Browser Multi-Instance Manager",
     "directories": {
