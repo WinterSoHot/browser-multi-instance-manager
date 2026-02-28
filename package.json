@@ -46,7 +46,9 @@
             "arm64"
           ]
         }
-      ]
+      ],
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
     },
     "win": {
       "target": [
