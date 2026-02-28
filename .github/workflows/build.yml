@@ -85,13 +85,56 @@ jobs:
         with:
           path: artifacts
 
+      - name: List artifacts
+        run: find artifacts -type f
+
       - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            artifacts/dmg-x64/*.dmg
-            artifacts/dmg-arm64/*.dmg
-            artifacts/exe/*.exe
-          draft: false
-          prerelease: false
-          generate_release_notes: true
+        run: |
+          # Install jq
+          sudo apt-get update && sudo apt-get install -y jq
+
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+
+          # Create release via GitHub API
+          curl -L -X POST https://api.github.com/repos/${{ github.repository }}/releases \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "tag_name": "'"$TAG_NAME"'",
+              "name": "'"$TAG_NAME"'",
+              "body": "Release '"$TAG_NAME"' built with electron-builder",
+              "draft": false,
+              "prerelease": false
+            }' > release.json
+
+          # Get upload URL
+          UPLOAD_URL=$(cat release.json | jq -r '.upload_url' | sed 's/{?name,label}//')
+          RELEASE_ID=$(cat release.json | jq -r '.id')
+
+          # Upload DMG x64
+          for f in artifacts/dmg-x64/*.dmg; do
+            [ -f "$f" ] && curl -L -X POST "$UPLOAD_URL?name=$(basename $f)" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$f"
+          done
+
+          # Upload DMG arm64
+          for f in artifacts/dmg-arm64/*.dmg; do
+            [ -f "$f" ] && curl -L -X POST "$UPLOAD_URL?name=$(basename $f)" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$f"
+          done
+
+          # Upload EXE
+          for f in artifacts/exe/*.exe; do
+            [ -f "$f" ] && curl -L -X POST "$UPLOAD_URL?name=$(basename $f)" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$f"
+          done
+
+          echo "Release created successfully!"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
