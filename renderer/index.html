@@ -12,8 +12,21 @@
       <h1>浏览器多实例管理器</h1>
     </header>
 
-    <section class="add-profile-section">
-      <h2>添加新配置</h2>
+    <section class="profiles-section">
+      <div class="section-header">
+        <h2>已保存的配置</h2>
+        <button id="openAddModal" class="btn btn-primary">+ 添加配置</button>
+      </div>
+      <div id="profilesList" class="profiles-list">
+        <p class="empty-message">暂无配置，请点击上方按钮添加</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- 添加配置弹窗 -->
+  <div id="addModal" class="modal">
+    <div class="modal-content">
+      <h3>添加新配置</h3>
       <form id="addProfileForm">
         <div class="form-group">
           <label for="browserType">浏览器:</label>
@@ -27,16 +40,12 @@
           <label for="profileName">配置名称:</label>
           <input type="text" id="profileName" placeholder="例如: 工作, 个人" required>
         </div>
-        <button type="submit" class="btn btn-primary">添加配置</button>
+        <div class="modal-actions">
+          <button type="submit" class="btn btn-primary">添加</button>
+          <button type="button" id="cancelAdd" class="btn btn-secondary">取消</button>
+        </div>
       </form>
-    </section>
-
-    <section class="profiles-section">
-      <h2>已保存的配置</h2>
-      <div id="profilesList" class="profiles-list">
-        <p class="empty-message">暂无配置，请在上方添加</p>
-      </div>
-    </section>
+    </div>
   </div>
 
   <!-- 重命名弹窗 -->

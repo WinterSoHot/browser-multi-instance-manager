@@ -58,6 +58,7 @@ document.getElementById('addProfileForm').addEventListener('submit', async (e) =
     profiles.push(result.profile);
     renderProfiles();
     document.getElementById('profileName').value = '';
+    document.getElementById('addModal').classList.remove('show');
   } else {
     alert('错误: ' + result.error);
   }
@@ -155,6 +156,34 @@ document.getElementById('newProfileName').addEventListener('keydown', (e) => {
     document.getElementById('confirmRename').click();
   } else if (e.key === 'Escape') {
     closeModal();
+  }
+});
+
+// Add profile modal event handlers
+document.getElementById('openAddModal').addEventListener('click', () => {
+  document.getElementById('browserType').value = 'chrome';
+  document.getElementById('profileName').value = '';
+  document.getElementById('addModal').classList.add('show');
+  document.getElementById('profileName').focus();
+});
+
+document.getElementById('cancelAdd').addEventListener('click', () => {
+  document.getElementById('addModal').classList.remove('show');
+});
+
+// Close modal on outside click
+document.getElementById('addModal').addEventListener('click', (e) => {
+  if (e.target.id === 'addModal') {
+    document.getElementById('addModal').classList.remove('show');
+  }
+});
+
+// Close modal on Enter key in add form
+document.getElementById('profileName').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    document.getElementById('addProfileForm').dispatchEvent(new Event('submit'));
+  } else if (e.key === 'Escape') {
+    document.getElementById('addModal').classList.remove('show');
   }
 });
 
