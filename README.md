@@ -51,6 +51,29 @@ npm start
     └── renderer.js   # 渲染进程逻辑
 ```
 
+## 构建安装包
+
+### 构建 macOS DMG
+
+```bash
+npm run build:mac
+```
+
+### 构建 Windows EXE
+
+```bash
+npm run build:win
+```
+
+### 构建所有平台
+
+```bash
+npm run build:all
+```
+
+构建完成后，安装包位于 `dist/` 目录下。
+
 ## 平台
 
 - macOS
+- Windows (需要 Windows 系统构建)
