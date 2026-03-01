@@ -1,4 +1,4 @@
-// Render process logic
+// Render process logic - Main page
 
 let profiles = [];
 let currentRenameId = null;
@@ -185,6 +185,11 @@ document.getElementById('profileName').addEventListener('keydown', (e) => {
   } else if (e.key === 'Escape') {
     document.getElementById('addModal').classList.remove('show');
   }
+});
+
+// Settings button handler
+document.getElementById('openSettings').addEventListener('click', () => {
+  window.location.href = 'settings.html';
 });
 
 // Initialize

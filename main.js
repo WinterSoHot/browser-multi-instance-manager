@@ -1,51 +1,102 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
-const path = require('path');
-const { spawn } = require('child_process');
-const fs = require('fs');
-const Store = require('electron-store');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const path = require("path");
+const { spawn } = require("child_process");
+const fs = require("fs");
+const Store = require("electron-store");
 
 // Initialize store
 const store = new Store({
-  name: 'browser-profiles',
+  name: "browser-profiles",
   defaults: {
-    profiles: []
-  }
+    profiles: [],
+    browserSettings: {},
+  },
 });
 
 let mainWindow;
 
-// Get profiles directory
+// Get current platform
+function getPlatform() {
+  return process.platform;
+}
+
+// Get default browser paths based on platform
+function getDefaultBrowserPaths() {
+  const isMac = process.platform === "darwin";
+  const isWin = process.platform === "win32";
+
+  const paths = {
+    chrome: isMac
+      ? "/Applications/Google Chrome.app"
+      : isWin
+        ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        : "",
+    firefox: isMac
+      ? "/Applications/Firefox.app"
+      : isWin
+        ? "C:\\Program Files\\Mozilla Firefox\\firefox.exe"
+        : "",
+    edge: isMac
+      ? "/Applications/Microsoft Edge.app"
+      : isWin
+        ? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+        : "",
+    zen: isMac
+      ? "/Applications/Zen.app"
+      : isWin
+        ? "C:\\Program Files\\Zen Browser\\zen.exe"
+        : "",
+  };
+
+  return paths;
+}
+
+// Get browser executable path based on platform and browser type
+function getBrowserExecutable(browserType) {
+  const customSettings = store.get("browserSettings", {});
+  const customPath = customSettings[browserType];
+
+  // If custom path is set, use it
+  if (customPath) {
+    return customPath;
+  }
+
+  // Use default paths
+  const isMac = process.platform === "darwin";
+  const isWin = process.platform === "win32";
+
+  const defaultExecutables = {
+    chrome: isMac
+      ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+      : isWin
+        ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        : "",
+    firefox: isMac
+      ? "/Applications/Firefox.app/Contents/MacOS/firefox"
+      : isWin
+        ? "C:\\Program Files\\Mozilla Firefox\\firefox.exe"
+        : "",
+    edge: isMac
+      ? "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+      : isWin
+        ? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+        : "",
+    zen: isMac
+      ? "/Applications/Zen.app/Contents/MacOS/zen"
+      : isWin
+        ? "C:\\Program Files\\Zen Browser\\zen.exe"
+        : "",
+  };
+
+  return defaultExecutables[browserType] || null;
+}
+
 function getProfilesDir() {
-  const profilesDir = path.join(app.getPath('userData'), 'profiles');
+  const profilesDir = path.join(app.getPath("userData"), "profiles");
   if (!fs.existsSync(profilesDir)) {
     fs.mkdirSync(profilesDir, { recursive: true });
   }
   return profilesDir;
-}
-
-// Find browser path on macOS
-function findBrowserPath(browserType) {
-  const browserPaths = {
-    chrome: '/Applications/Google Chrome.app',
-    firefox: '/Applications/Firefox.app',
-    edge: '/Applications/Microsoft Edge.app'
-  };
-
-  const basePath = browserPaths[browserType];
-  if (fs.existsSync(basePath)) {
-    return basePath;
-  }
-  return null;
-}
-
-// Get browser executable path
-function getBrowserExecutable(browserType) {
-  const browserPaths = {
-    chrome: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    firefox: '/Applications/Firefox.app/Contents/MacOS/firefox',
-    edge: '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
-  };
-  return browserPaths[browserType] || null;
 }
 
 // Launch browser with profile
@@ -59,19 +110,20 @@ function launchBrowser(browserType, profilePath) {
   let args = [];
 
   switch (browserType) {
-    case 'chrome':
-    case 'edge':
-      args = ['--user-data-dir=' + profilePath];
+    case "chrome":
+    case "edge":
+      args = ["--user-data-dir=" + profilePath];
       break;
-    case 'firefox':
-      args = ['-profile', profilePath];
+    case "firefox":
+    case "zen":
+      args = ["-profile", profilePath];
       break;
     default:
-      return { success: false, error: 'Unknown browser type' };
+      return { success: false, error: "Unknown browser type" };
   }
 
   try {
-    spawn(exePath, args, { detached: true, stdio: 'ignore' }).unref();
+    spawn(exePath, args, { detached: true, stdio: "ignore" }).unref();
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -100,24 +152,24 @@ function createWindow() {
     width: 800,
     height: 600,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js')
-    }
+      preload: path.join(__dirname, "preload.js"),
+    },
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
 }
 
 // IPC Handlers
-ipcMain.handle('get-profiles', () => {
-  return store.get('profiles', []);
+ipcMain.handle("get-profiles", () => {
+  return store.get("profiles", []);
 });
 
-ipcMain.handle('add-profile', (event, { browserType, profileName }) => {
-  const profiles = store.get('profiles', []);
+ipcMain.handle("add-profile", (event, { browserType, profileName }) => {
+  const profiles = store.get("profiles", []);
 
   // Check if profile name already exists
-  if (profiles.some(p => p.name === profileName)) {
-    return { success: false, error: 'Profile name already exists' };
+  if (profiles.some((p) => p.name === profileName)) {
+    return { success: false, error: "Profile name already exists" };
   }
 
   const profilePath = createProfileDir(browserType, profileName);
@@ -127,44 +179,44 @@ ipcMain.handle('add-profile', (event, { browserType, profileName }) => {
     browserType,
     name: profileName,
     path: profilePath,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
   };
 
   profiles.push(newProfile);
-  store.set('profiles', profiles);
+  store.set("profiles", profiles);
 
   return { success: true, profile: newProfile };
 });
 
-ipcMain.handle('delete-profile', (event, profileId) => {
-  const profiles = store.get('profiles', []);
-  const filteredProfiles = profiles.filter(p => p.id !== profileId);
-  store.set('profiles', filteredProfiles);
+ipcMain.handle("delete-profile", (event, profileId) => {
+  const profiles = store.get("profiles", []);
+  const filteredProfiles = profiles.filter((p) => p.id !== profileId);
+  store.set("profiles", filteredProfiles);
   return { success: true };
 });
 
-ipcMain.handle('launch-browser', (event, profileId) => {
-  const profiles = store.get('profiles', []);
-  const profile = profiles.find(p => p.id === profileId);
+ipcMain.handle("launch-browser", (event, profileId) => {
+  const profiles = store.get("profiles", []);
+  const profile = profiles.find((p) => p.id === profileId);
 
   if (!profile) {
-    return { success: false, error: 'Profile not found' };
+    return { success: false, error: "Profile not found" };
   }
 
   return launchBrowser(profile.browserType, profile.path);
 });
 
-ipcMain.handle('rename-profile', (event, { profileId, newName }) => {
-  const profiles = store.get('profiles', []);
+ipcMain.handle("rename-profile", (event, { profileId, newName }) => {
+  const profiles = store.get("profiles", []);
 
   // Check if new name already exists
-  if (profiles.some(p => p.name === newName && p.id !== profileId)) {
-    return { success: false, error: 'Profile name already exists' };
+  if (profiles.some((p) => p.name === newName && p.id !== profileId)) {
+    return { success: false, error: "Profile name already exists" };
   }
 
-  const profileIndex = profiles.findIndex(p => p.id === profileId);
+  const profileIndex = profiles.findIndex((p) => p.id === profileId);
   if (profileIndex === -1) {
-    return { success: false, error: 'Profile not found' };
+    return { success: false, error: "Profile not found" };
   }
 
   const profile = profiles[profileIndex];
@@ -176,39 +228,78 @@ ipcMain.handle('rename-profile', (event, { profileId, newName }) => {
     try {
       fs.renameSync(oldPath, newPath);
     } catch (error) {
-      return { success: false, error: 'Failed to rename directory: ' + error.message };
+      return {
+        success: false,
+        error: "Failed to rename directory: " + error.message,
+      };
     }
   }
 
   profile.name = newName;
   profile.path = newPath;
-  store.set('profiles', profiles);
+  store.set("profiles", profiles);
 
   return { success: true, profile: profile };
 });
 
-ipcMain.handle('open-profile-folder', (event, profileId) => {
-  const profiles = store.get('profiles', []);
-  const profile = profiles.find(p => p.id === profileId);
+ipcMain.handle("open-profile-folder", (event, profileId) => {
+  const profiles = store.get("profiles", []);
+  const profile = profiles.find((p) => p.id === profileId);
 
   if (!profile) {
-    return { success: false, error: 'Profile not found' };
+    return { success: false, error: "Profile not found" };
   }
 
   if (!fs.existsSync(profile.path)) {
-    return { success: false, error: 'Profile folder not found' };
+    return { success: false, error: "Profile folder not found" };
   }
 
   shell.openPath(profile.path);
   return { success: true };
 });
 
+// New IPC handlers for browser settings
+ipcMain.handle("get-browser-settings", () => {
+  return store.get("browserSettings", {});
+});
+
+ipcMain.handle("set-browser-settings", (event, settings) => {
+  store.set("browserSettings", settings);
+  return { success: true };
+});
+
+ipcMain.handle("get-default-browser-path", (event, browserType) => {
+  const defaultPaths = getDefaultBrowserPaths();
+  return defaultPaths[browserType] || "";
+});
+
+ipcMain.handle("get-platform", () => {
+  return getPlatform();
+});
+
+ipcMain.handle("browse-folder", async (event, defaultPath) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openFile"],
+    defaultPath: defaultPath || undefined,
+    filters: [
+      { name: "Executables", extensions: ["exe", "app", ""] },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return { success: false, path: null };
+  }
+
+  return { success: true, path: result.filePaths[0] };
+});
+
 app.whenReady().then(() => {
   createWindow();
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
     app.quit();
   }
 });

@@ -8,5 +8,11 @@ contextBridge.exposeInMainWorld('browserAPI', {
   launchBrowser: (profileId) => ipcRenderer.invoke('launch-browser', profileId),
   renameProfile: (profileId, newName) =>
     ipcRenderer.invoke('rename-profile', { profileId, newName }),
-  openProfileFolder: (profileId) => ipcRenderer.invoke('open-profile-folder', profileId)
+  openProfileFolder: (profileId) => ipcRenderer.invoke('open-profile-folder', profileId),
+  // New browser settings APIs
+  getBrowserSettings: () => ipcRenderer.invoke('get-browser-settings'),
+  setBrowserSettings: (settings) => ipcRenderer.invoke('set-browser-settings', settings),
+  getDefaultBrowserPath: (browserType) => ipcRenderer.invoke('get-default-browser-path', browserType),
+  getPlatform: () => ipcRenderer.invoke('get-platform'),
+  browseFolder: (defaultPath) => ipcRenderer.invoke('browse-folder', defaultPath)
 });
