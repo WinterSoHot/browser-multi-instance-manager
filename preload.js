@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('browserAPI', {
     ipcRenderer.invoke('add-profile', { browserType, profileName }),
   deleteProfile: (profileId) => ipcRenderer.invoke('delete-profile', profileId),
   launchBrowser: (profileId) => ipcRenderer.invoke('launch-browser', profileId),
+  closeBrowser: (profileId) => ipcRenderer.invoke('close-browser', profileId),
+  getBrowserStatus: (profileId) => ipcRenderer.invoke('get-browser-status', profileId),
   renameProfile: (profileId, newName) =>
     ipcRenderer.invoke('rename-profile', { profileId, newName }),
   openProfileFolder: (profileId) => ipcRenderer.invoke('open-profile-folder', profileId),

@@ -2,11 +2,40 @@
 
 let profiles = [];
 let currentRenameId = null;
+let runningBrowsers = new Set();
+let statusCheckInterval = null;
 
 // Load profiles on startup
 async function loadProfiles() {
   profiles = await window.browserAPI.getProfiles();
   renderProfiles();
+
+  // Start polling browser status
+  startStatusPolling();
+}
+
+// Poll browser status every 2 seconds
+function startStatusPolling() {
+  if (statusCheckInterval) {
+    clearInterval(statusCheckInterval);
+  }
+
+  statusCheckInterval = setInterval(async () => {
+    if (runningBrowsers.size === 0) return;
+
+    const toRemove = [];
+    for (const profileId of runningBrowsers) {
+      const status = await window.browserAPI.getBrowserStatus(profileId);
+      if (!status.running) {
+        toRemove.push(profileId);
+      }
+    }
+
+    if (toRemove.length > 0) {
+      toRemove.forEach(id => runningBrowsers.delete(id));
+      renderProfiles();
+    }
+  }, 2000);
 }
 
 // Render profiles list
@@ -18,20 +47,25 @@ function renderProfiles() {
     return;
   }
 
-  profilesList.innerHTML = profiles.map(profile => `
+  profilesList.innerHTML = profiles.map(profile => {
+    const isRunning = runningBrowsers.has(profile.id);
+    const btnClass = isRunning ? 'btn-danger' : 'btn-success';
+    const btnText = isRunning ? '关闭' : '启动';
+
+    return `
     <div class="profile-card" data-id="${profile.id}">
       <div class="profile-info">
         <h3>${escapeHtml(profile.name)}</h3>
         <span class="browser-type">${profile.browserType}</span>
       </div>
       <div class="profile-actions">
-        <button class="btn btn-success btn-small" onclick="launchBrowser('${profile.id}')">启动</button>
+        <button class="btn ${btnClass} btn-small" onclick="toggleBrowser('${profile.id}')">${btnText}</button>
         <button class="btn btn-secondary btn-small" onclick="openProfileFolder('${profile.id}')">文件夹</button>
         <button class="btn btn-warning btn-small" onclick="renameProfile('${profile.id}', '${escapeHtml(profile.name)}')">重命名</button>
         <button class="btn btn-danger btn-small" onclick="deleteProfile('${profile.id}')">删除</button>
       </div>
     </div>
-  `).join('');
+  `}).join('');
 }
 
 // Escape HTML to prevent XSS
@@ -70,6 +104,12 @@ async function deleteProfile(profileId) {
     return;
   }
 
+  // If browser is running, close it first
+  if (runningBrowsers.has(profileId)) {
+    await window.browserAPI.closeBrowser(profileId);
+    runningBrowsers.delete(profileId);
+  }
+
   const result = await window.browserAPI.deleteProfile(profileId);
 
   if (result.success) {
@@ -80,13 +120,33 @@ async function deleteProfile(profileId) {
   }
 }
 
-// Launch browser
-async function launchBrowser(profileId) {
-  const result = await window.browserAPI.launchBrowser(profileId);
+// Toggle browser (launch or close)
+async function toggleBrowser(profileId) {
+  if (runningBrowsers.has(profileId)) {
+    // Close the browser
+    const result = await window.browserAPI.closeBrowser(profileId);
+    if (result.success) {
+      runningBrowsers.delete(profileId);
+      renderProfiles();
+    } else {
+      alert('关闭浏览器失败: ' + result.error);
+    }
+  } else {
+    // Launch the browser
+    const result = await window.browserAPI.launchBrowser(profileId);
 
-  if (!result.success) {
-    alert('启动浏览器失败: ' + result.error);
+    if (result.success) {
+      runningBrowsers.add(profileId);
+      renderProfiles();
+    } else {
+      alert('启动浏览器失败: ' + result.error);
+    }
   }
+}
+
+// Launch browser (legacy function, use toggleBrowser instead)
+async function launchBrowser(profileId) {
+  await toggleBrowser(profileId);
 }
 
 // Open profile folder
