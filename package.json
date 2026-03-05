@@ -1,6 +1,6 @@
 {
   "name": "browser-multi-instance-manager",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "浏览器多实例管理器 - Browser multi-instance management desktop application",
   "main": "main.js",
   "scripts": {

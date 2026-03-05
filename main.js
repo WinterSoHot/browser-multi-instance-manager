@@ -240,24 +240,47 @@ ipcMain.handle("close-browser", (event, profileId) => {
     const { exec } = require('child_process');
     const isWin = process.platform === 'win32';
     const isMac = process.platform === 'darwin';
+    const profilePath = browserInfo.profilePath;
 
     if (isWin) {
-      // Windows: kill by process name
+      // Windows: find and kill process with matching user-data-dir
+      // Use wmic to find process with command line containing the profile path
       const processName = browserInfo.browserType === 'chrome' ? 'chrome.exe' :
                           browserInfo.browserType === 'edge' ? 'msedge.exe' :
                           browserInfo.browserType === 'firefox' ? 'firefox.exe' :
                           browserInfo.browserType === 'zen' ? 'zen.exe' : '';
-      exec(`taskkill /F /IM ${processName}`, (err) => {
-        // Ignore errors - process might already be closed
+
+      exec(`wmic process where "name='${processName}' and CommandLine like '%${profilePath}%'" get ProcessId`, (err, stdout) => {
+        if (!err && stdout) {
+          const pids = stdout.split('\n')
+            .slice(1)
+            .map(line => line.trim())
+            .filter(line => line.match(/^\d+$/));
+          pids.forEach(pid => {
+            exec(`taskkill /F /PID ${pid}`, () => {});
+          });
+        }
       });
     } else if (isMac) {
-      // macOS: kill by process name
-      const appName = browserInfo.browserType === 'chrome' ? 'Google Chrome' :
-                      browserInfo.browserType === 'edge' ? 'Microsoft Edge' :
-                      browserInfo.browserType === 'firefox' ? 'Firefox' :
-                      browserInfo.browserType === 'zen' ? 'Zen' : '';
-      exec(`osascript -e 'tell application "${appName}" to quit'`, (err) => {
-        // Ignore errors
+      // macOS: find process with matching profile path in arguments
+      const processName = browserInfo.browserType === 'chrome' ? 'Google Chrome' :
+                          browserInfo.browserType === 'edge' ? 'Microsoft Edge' :
+                          browserInfo.browserType === 'firefox' ? 'Firefox' :
+                          browserInfo.browserType === 'zen' ? 'Zen' : '';
+
+      const binaryName = browserInfo.browserType === 'chrome' ? 'Google Chrome' :
+                         browserInfo.browserType === 'edge' ? 'Microsoft Edge' :
+                         browserInfo.browserType === 'firefox' ? 'firefox' :
+                         browserInfo.browserType === 'zen' ? 'zen' : '';
+
+      // Find PIDs with matching --user-data-dir or -profile argument
+      exec(`pgrep -f "${binaryName}.*${profilePath}"`, (err, stdout) => {
+        if (!err && stdout) {
+          const pids = stdout.trim().split('\n').filter(p => p);
+          pids.forEach(pid => {
+            exec(`kill -9 ${pid}`, () => {});
+          });
+        }
       });
     }
 
@@ -268,14 +291,14 @@ ipcMain.handle("close-browser", (event, profileId) => {
   }
 });
 
-ipcMain.handle("get-browser-status", (event, profileId) => {
+ipcMain.handle("get-browser-status", async (event, profileId) => {
   const browserInfo = runningBrowsers.get(profileId);
   if (!browserInfo) {
     return { running: false };
   }
 
-  // Check if the browser process is still running
-  try {
+  // Check if the browser process is still running (async)
+  return new Promise((resolve) => {
     const { exec } = require('child_process');
     const isWin = process.platform === 'win32';
 
@@ -285,15 +308,14 @@ ipcMain.handle("get-browser-status", (event, profileId) => {
                           browserInfo.browserType === 'firefox' ? 'firefox.exe' :
                           browserInfo.browserType === 'zen' ? 'zen.exe' : '';
 
-      // Synchronous check for Windows
-      const { execSync } = require('child_process');
-      try {
-        execSync(`tasklist /FI "IMAGENAME eq ${processName}" /NH`, { stdio: 'pipe' });
-        return { running: true };
-      } catch (e) {
-        runningBrowsers.delete(profileId);
-        return { running: false };
-      }
+      exec(`tasklist /FI "IMAGENAME eq ${processName}" /NH`, (err, stdout) => {
+        if (err || !stdout.includes(processName)) {
+          runningBrowsers.delete(profileId);
+          resolve({ running: false });
+        } else {
+          resolve({ running: true });
+        }
+      });
     } else {
       // macOS: check if app is running
       const appName = browserInfo.browserType === 'chrome' ? 'Google Chrome' :
@@ -301,22 +323,15 @@ ipcMain.handle("get-browser-status", (event, profileId) => {
                       browserInfo.browserType === 'firefox' ? 'Firefox' :
                       browserInfo.browserType === 'zen' ? 'Zen' : '';
 
-      const { execSync } = require('child_process');
-      try {
-        const result = execSync(`osascript -e 'tell application "System Events" to name of every process whose background only is false'`, { encoding: 'utf8' });
-        const isRunning = result.includes(appName);
+      exec(`osascript -e 'tell application "System Events" to name of every process whose background only is false'`, (err, stdout) => {
+        const isRunning = !err && stdout.includes(appName);
         if (!isRunning) {
           runningBrowsers.delete(profileId);
         }
-        return { running: isRunning };
-      } catch (e) {
-        runningBrowsers.delete(profileId);
-        return { running: false };
-      }
+        resolve({ running: isRunning });
+      });
     }
-  } catch (error) {
-    return { running: false };
-  }
+  });
 });
 
 ipcMain.handle("rename-profile", (event, { profileId, newName }) => {
