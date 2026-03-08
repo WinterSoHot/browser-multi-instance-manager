@@ -37,8 +37,10 @@
       "renderer/**/*",
       "package.json"
     ],
+    "icon": "build/icons/icon.png",
     "mac": {
       "category": "public.app-category.utilities",
+      "icon": "build/icons/icon.icns",
       "target": [
         {
           "target": "dmg",
@@ -59,7 +61,8 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "icon": "build/icons/icon.ico"
     },
     "nsis": {
       "oneClick": false,
