@@ -47,6 +47,7 @@ function renderProfiles() {
     profilesList.innerHTML = '<p class="empty-message">暂无配置，请在上方添加</p>';
     updateSelectAllButton();
     updateLaunchSelectedButton();
+    updateCloseSelectedButton();
     return;
   }
 
@@ -97,6 +98,7 @@ function renderProfiles() {
 
   updateSelectAllButton();
   updateLaunchSelectedButton();
+  updateCloseSelectedButton();
 }
 
 // Escape HTML to prevent XSS
@@ -333,6 +335,33 @@ document.getElementById('launchSelectedBtn').addEventListener('click', async () 
   renderProfiles();
 });
 
+// Close selected profiles
+document.getElementById('closeSelectedBtn').addEventListener('click', async () => {
+  if (selectedProfiles.size === 0) {
+    alert('请先选择要关闭的配置');
+    return;
+  }
+
+  const toClose = Array.from(selectedProfiles).filter(id => runningBrowsers.has(id));
+
+  if (toClose.length === 0) {
+    alert('已选中的配置都已关闭');
+    return;
+  }
+
+  // Close all selected browsers concurrently
+  await Promise.all(toClose.map(async (profileId) => {
+    const result = await window.browserAPI.closeBrowser(profileId);
+    if (result.success) {
+      runningBrowsers.delete(profileId);
+    }
+  }));
+
+  // Clear selection after close
+  selectedProfiles.clear();
+  renderProfiles();
+});
+
 // Select all profiles
 document.getElementById('selectAllBtn').addEventListener('click', () => {
   const allIds = profiles.map(p => p.id);
@@ -378,6 +407,23 @@ function updateLaunchSelectedButton() {
       selectedCount.textContent = notRunningSelected.length;
     } else {
       launchSelectedBtn.style.display = 'none';
+    }
+  }
+}
+
+// Update close selected button
+function updateCloseSelectedButton() {
+  const closeSelectedBtn = document.getElementById('closeSelectedBtn');
+  const closeSelectedCount = document.getElementById('closeSelectedCount');
+
+  if (closeSelectedBtn && closeSelectedCount) {
+    const runningSelected = Array.from(selectedProfiles).filter(id => runningBrowsers.has(id));
+
+    if (runningSelected.length > 0) {
+      closeSelectedBtn.style.display = 'block';
+      closeSelectedCount.textContent = runningSelected.length;
+    } else {
+      closeSelectedBtn.style.display = 'none';
     }
   }
 }
