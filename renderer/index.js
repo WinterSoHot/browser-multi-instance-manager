@@ -4,6 +4,7 @@ let profiles = [];
 let currentRenameId = null;
 let runningBrowsers = new Set();
 let statusCheckInterval = null;
+let selectedProfiles = new Set();
 
 // Load profiles on startup
 async function loadProfiles() {
@@ -44,6 +45,8 @@ function renderProfiles() {
 
   if (profiles.length === 0) {
     profilesList.innerHTML = '<p class="empty-message">暂无配置，请在上方添加</p>';
+    updateSelectAllButton();
+    updateLaunchSelectedButton();
     return;
   }
 
@@ -51,21 +54,49 @@ function renderProfiles() {
     const isRunning = runningBrowsers.has(profile.id);
     const btnClass = isRunning ? 'btn-danger' : 'btn-success';
     const btnText = isRunning ? '关闭' : '启动';
+    const launchFunc = isRunning ? 'closeBrowserOnly' : 'launchBrowserOnly';
+    const isSelected = selectedProfiles.has(profile.id);
 
     return `
-    <div class="profile-card" data-id="${profile.id}">
+    <div class="profile-card ${isSelected ? 'selected' : ''}" data-id="${profile.id}">
       <div class="profile-info">
+        <label class="checkbox-label">
+          <input type="checkbox" class="profile-checkbox" data-id="${profile.id}" ${isSelected ? 'checked' : ''}>
+          <span class="checkbox-custom"></span>
+        </label>
         <h3>${escapeHtml(profile.name)}</h3>
         <span class="browser-type">${profile.browserType}</span>
       </div>
       <div class="profile-actions">
-        <button class="btn ${btnClass} btn-small" onclick="toggleBrowser('${profile.id}')">${btnText}</button>
+        <button class="btn ${btnClass} btn-small" onclick="${launchFunc}('${profile.id}')">${btnText}</button>
         <button class="btn btn-secondary btn-small" onclick="openProfileFolder('${profile.id}')">文件夹</button>
         <button class="btn btn-warning btn-small" onclick="renameProfile('${profile.id}', '${escapeHtml(profile.name)}')">重命名</button>
         <button class="btn btn-danger btn-small" onclick="deleteProfile('${profile.id}')">删除</button>
       </div>
     </div>
   `}).join('');
+
+  // Add event listeners to checkboxes
+  document.querySelectorAll('.profile-checkbox').forEach(checkbox => {
+    checkbox.addEventListener('change', (e) => {
+      e.stopPropagation();
+      toggleProfileSelection(e.target.dataset.id);
+    });
+  });
+
+  document.querySelectorAll('.profile-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      // Don't toggle selection when clicking on buttons or checkbox
+      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('.checkbox-label')) {
+        return;
+      }
+      const profileId = card.dataset.id;
+      toggleProfileSelection(profileId);
+    });
+  });
+
+  updateSelectAllButton();
+  updateLaunchSelectedButton();
 }
 
 // Escape HTML to prevent XSS
@@ -90,11 +121,12 @@ document.getElementById('addProfileForm').addEventListener('submit', async (e) =
 
   if (result.success) {
     profiles.push(result.profile);
+    selectedProfiles.clear(); // Clear selection when adding new profile
     renderProfiles();
     document.getElementById('profileName').value = '';
     document.getElementById('addModal').classList.remove('show');
   } else {
-    alert('错误: ' + result.error);
+    alert('错误：' + result.error);
   }
 });
 
@@ -110,41 +142,63 @@ async function deleteProfile(profileId) {
     runningBrowsers.delete(profileId);
   }
 
+  // Remove from selection if selected
+  selectedProfiles.delete(profileId);
+
   const result = await window.browserAPI.deleteProfile(profileId);
 
   if (result.success) {
     profiles = profiles.filter(p => p.id !== profileId);
     renderProfiles();
   } else {
-    alert('错误: ' + result.error);
+    alert('错误：' + result.error);
   }
 }
 
-// Toggle browser (launch or close)
+// Toggle browser (launch or close) - deprecated
 async function toggleBrowser(profileId) {
   if (runningBrowsers.has(profileId)) {
-    // Close the browser
     const result = await window.browserAPI.closeBrowser(profileId);
     if (result.success) {
       runningBrowsers.delete(profileId);
       renderProfiles();
     } else {
-      alert('关闭浏览器失败: ' + result.error);
+      alert('关闭浏览器失败：' + result.error);
     }
   } else {
-    // Launch the browser
     const result = await window.browserAPI.launchBrowser(profileId);
-
     if (result.success) {
       runningBrowsers.add(profileId);
       renderProfiles();
     } else {
-      alert('启动浏览器失败: ' + result.error);
+      alert('启动浏览器失败：' + result.error);
     }
   }
 }
 
-// Launch browser (legacy function, use toggleBrowser instead)
+// Launch browser only (supports multiple instances)
+async function launchBrowserOnly(profileId) {
+  const result = await window.browserAPI.launchBrowser(profileId);
+  if (result.success) {
+    runningBrowsers.add(profileId);
+    renderProfiles();
+  } else {
+    alert('启动浏览器失败：' + result.error);
+  }
+}
+
+// Close browser
+async function closeBrowserOnly(profileId) {
+  const result = await window.browserAPI.closeBrowser(profileId);
+  if (result.success) {
+    runningBrowsers.delete(profileId);
+    renderProfiles();
+  } else {
+    alert('关闭浏览器失败：' + result.error);
+  }
+}
+
+// Launch browser (legacy function)
 async function launchBrowser(profileId) {
   await toggleBrowser(profileId);
 }
@@ -154,7 +208,7 @@ async function openProfileFolder(profileId) {
   const result = await window.browserAPI.openProfileFolder(profileId);
 
   if (!result.success) {
-    alert('打开文件夹失败: ' + result.error);
+    alert('打开文件夹失败：' + result.error);
   }
 }
 
@@ -192,7 +246,7 @@ document.getElementById('confirmRename').addEventListener('click', async () => {
     renderProfiles();
     closeModal();
   } else {
-    alert('错误: ' + result.error);
+    alert('错误：' + result.error);
   }
 });
 
@@ -251,6 +305,82 @@ document.getElementById('profileName').addEventListener('keydown', (e) => {
 document.getElementById('openSettings').addEventListener('click', () => {
   window.location.href = 'settings.html';
 });
+
+// Launch selected profiles
+document.getElementById('launchSelectedBtn').addEventListener('click', async () => {
+  if (selectedProfiles.size === 0) {
+    alert('请先选择要启动的配置');
+    return;
+  }
+
+  const toLaunch = Array.from(selectedProfiles).filter(id => !runningBrowsers.has(id));
+
+  if (toLaunch.length === 0) {
+    alert('已选中的配置都已启动');
+    return;
+  }
+
+  // Launch all selected browsers concurrently
+  await Promise.all(toLaunch.map(async (profileId) => {
+    const result = await window.browserAPI.launchBrowser(profileId);
+    if (result.success) {
+      runningBrowsers.add(profileId);
+    }
+  }));
+
+  // Clear selection after launch
+  selectedProfiles.clear();
+  renderProfiles();
+});
+
+// Select all profiles
+document.getElementById('selectAllBtn').addEventListener('click', () => {
+  const allIds = profiles.map(p => p.id);
+  const allSelected = allIds.every(id => selectedProfiles.has(id));
+
+  if (allSelected) {
+    selectedProfiles.clear();
+  } else {
+    allIds.forEach(id => selectedProfiles.add(id));
+  }
+  renderProfiles();
+});
+
+// Toggle profile selection
+function toggleProfileSelection(profileId) {
+  if (selectedProfiles.has(profileId)) {
+    selectedProfiles.delete(profileId);
+  } else {
+    selectedProfiles.add(profileId);
+  }
+  renderProfiles();
+}
+
+// Update select all button text
+function updateSelectAllButton() {
+  const selectAllBtn = document.getElementById('selectAllBtn');
+  if (selectAllBtn && profiles.length > 0) {
+    const allSelected = profiles.every(p => selectedProfiles.has(p.id));
+    selectAllBtn.textContent = allSelected ? '取消全选' : '全选';
+  }
+}
+
+// Update launch selected button
+function updateLaunchSelectedButton() {
+  const launchSelectedBtn = document.getElementById('launchSelectedBtn');
+  const selectedCount = document.getElementById('selectedCount');
+
+  if (launchSelectedBtn && selectedCount) {
+    const notRunningSelected = Array.from(selectedProfiles).filter(id => !runningBrowsers.has(id));
+
+    if (notRunningSelected.length > 0) {
+      launchSelectedBtn.style.display = 'block';
+      selectedCount.textContent = notRunningSelected.length;
+    } else {
+      launchSelectedBtn.style.display = 'none';
+    }
+  }
+}
 
 // Initialize
 loadProfiles();
