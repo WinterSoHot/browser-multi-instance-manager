@@ -257,7 +257,7 @@ ipcMain.handle("close-browser", (event, profileId) => {
             .map(line => line.trim())
             .filter(line => line.match(/^\d+$/));
           pids.forEach(pid => {
-            exec(`taskkill /F /PID ${pid}`, () => {});
+            exec(`taskkill /PID ${pid}`, () => {});
           });
         }
       });
@@ -278,7 +278,7 @@ ipcMain.handle("close-browser", (event, profileId) => {
         if (!err && stdout) {
           const pids = stdout.trim().split('\n').filter(p => p);
           pids.forEach(pid => {
-            exec(`kill -9 ${pid}`, () => {});
+            exec(`kill -15 ${pid}`, () => {});
           });
         }
       });
