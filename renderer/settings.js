@@ -26,6 +26,12 @@ async function loadSettings() {
     defaultPaths[browserType] = await window.browserAPI.getDefaultBrowserPath(browserType);
   }
 
+  // Load default view mode
+  const savedViewMode = localStorage.getItem('defaultViewMode');
+  if (savedViewMode) {
+    document.getElementById('defaultViewMode').value = savedViewMode;
+  }
+
   renderBrowserSettings();
 }
 
@@ -104,6 +110,11 @@ document.getElementById('saveSettings').addEventListener('click', async () => {
   }
 
   await window.browserAPI.setBrowserSettings(newSettings);
+
+  // Save default view mode
+  const viewMode = document.getElementById('defaultViewMode').value;
+  localStorage.setItem('defaultViewMode', viewMode);
+
   alert('设置已保存');
   customSettings = newSettings;
   renderBrowserSettings();

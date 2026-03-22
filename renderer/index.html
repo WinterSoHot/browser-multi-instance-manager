@@ -16,13 +16,33 @@
       <div class="section-header">
         <h2>配置列表</h2>
         <div class="header-actions">
+          <div class="view-toggle-group">
+            <button id="viewListBtn" class="btn btn-secondary btn-small" title="列表视图">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="8" y1="6" x2="21" y2="6"></line>
+                <line x1="8" y1="12" x2="21" y2="12"></line>
+                <line x1="8" y1="18" x2="21" y2="18"></line>
+                <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                <line x1="3" y1="18" x2="3.01" y2="18"></line>
+              </svg>
+            </button>
+            <button id="viewGridBtn" class="btn btn-secondary btn-small" title="网格视图">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+            </button>
+          </div>
           <button id="launchSelectedBtn" class="btn btn-success" style="display: none;">启动选中 (<span id="selectedCount">0</span>)</button>
           <button id="closeSelectedBtn" class="btn btn-danger" style="display: none;">关闭选中 (<span id="closeSelectedCount">0</span>)</button>
           <button id="selectAllBtn" class="btn btn-secondary btn-small">全选</button>
           <button id="openAddModal" class="btn btn-primary">+ 新建配置</button>
         </div>
       </div>
-      <div id="profilesList" class="profiles-list">
+      <div id="profilesList" class="profiles-list view-list">
         <p class="empty-message">暂无配置，请点击上方按钮添加</p>
       </div>
     </section>

@@ -5,6 +5,7 @@ let currentRenameId = null;
 let runningBrowsers = new Set();
 let statusCheckInterval = null;
 let selectedProfiles = new Set();
+let currentViewMode = 'list'; // 'list' or 'grid'
 
 // Load profiles on startup
 async function loadProfiles() {
@@ -430,3 +431,47 @@ function updateCloseSelectedButton() {
 
 // Initialize
 loadProfiles();
+
+// View mode toggle
+document.getElementById('viewListBtn')?.addEventListener('click', () => setViewMode('list'));
+document.getElementById('viewGridBtn')?.addEventListener('click', () => setViewMode('grid'));
+
+// Load view mode from localStorage (check settings default first)
+function loadViewMode() {
+  const savedMode = localStorage.getItem('viewMode');
+  const defaultMode = localStorage.getItem('defaultViewMode');
+
+  if (savedMode === 'grid' || savedMode === 'list') {
+    currentViewMode = savedMode;
+  } else if (defaultMode === 'grid' || defaultMode === 'list') {
+    currentViewMode = defaultMode;
+  } else {
+    currentViewMode = 'list';
+  }
+  setViewMode(currentViewMode);
+}
+
+// Set view mode
+function setViewMode(mode) {
+  currentViewMode = mode;
+  localStorage.setItem('viewMode', mode);
+
+  const profilesList = document.getElementById('profilesList');
+  const viewListBtn = document.getElementById('viewListBtn');
+  const viewGridBtn = document.getElementById('viewGridBtn');
+
+  if (mode === 'grid') {
+    profilesList.classList.remove('view-list');
+    profilesList.classList.add('view-grid');
+    viewGridBtn.classList.add('active');
+    viewListBtn.classList.remove('active');
+  } else {
+    profilesList.classList.remove('view-grid');
+    profilesList.classList.add('view-list');
+    viewListBtn.classList.add('active');
+    viewGridBtn.classList.remove('active');
+  }
+}
+
+// Load view mode on startup
+loadViewMode();
