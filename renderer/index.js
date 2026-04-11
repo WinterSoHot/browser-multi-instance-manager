@@ -432,17 +432,34 @@ document.getElementById('closeSelectedBtn').addEventListener('click', async () =
   showToast(`已关闭 ${toClose.length} 个浏览器`, 'success');
 });
 
-// Select all profiles
+// Select all profiles - 只更新必要的 DOM，避免整体闪烁
 document.getElementById('selectAllBtn').addEventListener('click', () => {
   const allIds = profiles.map(p => p.id);
   const allSelected = allIds.every(id => selectedProfiles.has(id));
 
   if (allSelected) {
+    // 取消全选
     selectedProfiles.clear();
+    document.querySelectorAll('.profile-card.selected').forEach(card => {
+      card.classList.remove('selected');
+    });
+    document.querySelectorAll('.profile-checkbox:checked').forEach(cb => {
+      cb.checked = false;
+    });
   } else {
+    // 全选
     allIds.forEach(id => selectedProfiles.add(id));
+    document.querySelectorAll('.profile-card').forEach(card => {
+      card.classList.add('selected');
+    });
+    document.querySelectorAll('.profile-checkbox').forEach(cb => {
+      cb.checked = true;
+    });
   }
-  renderProfiles();
+
+  updateSelectAllButton();
+  updateLaunchSelectedButton();
+  updateCloseSelectedButton();
 });
 
 // Keyboard shortcuts for bulk actions
@@ -454,11 +471,28 @@ document.addEventListener('keydown', (e) => {
     const allSelected = allIds.every(id => selectedProfiles.has(id));
 
     if (allSelected) {
+      // 取消全选
       selectedProfiles.clear();
+      document.querySelectorAll('.profile-card.selected').forEach(card => {
+        card.classList.remove('selected');
+      });
+      document.querySelectorAll('.profile-checkbox:checked').forEach(cb => {
+        cb.checked = false;
+      });
     } else {
+      // 全选
       allIds.forEach(id => selectedProfiles.add(id));
+      document.querySelectorAll('.profile-card').forEach(card => {
+        card.classList.add('selected');
+      });
+      document.querySelectorAll('.profile-checkbox').forEach(cb => {
+        cb.checked = true;
+      });
     }
-    renderProfiles();
+
+    updateSelectAllButton();
+    updateLaunchSelectedButton();
+    updateCloseSelectedButton();
   }
 
   // Space to launch selected when profiles are selected
@@ -475,14 +509,26 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// Toggle profile selection
+// Toggle profile selection - 只更新单个卡片，避免整体闪烁
 function toggleProfileSelection(profileId) {
+  const card = document.querySelector(`.profile-card[data-id="${profileId}"]`);
+  const checkbox = document.querySelector(`.profile-checkbox[data-id="${profileId}"]`);
+
+  if (!card || !checkbox) return;
+
   if (selectedProfiles.has(profileId)) {
     selectedProfiles.delete(profileId);
+    card.classList.remove('selected');
+    checkbox.checked = false;
   } else {
     selectedProfiles.add(profileId);
+    card.classList.add('selected');
+    checkbox.checked = true;
   }
-  renderProfiles();
+
+  updateSelectAllButton();
+  updateLaunchSelectedButton();
+  updateCloseSelectedButton();
 }
 
 // Update select all button text
