@@ -124,6 +124,7 @@ function renderProfiles() {
         <button class="btn btn-warning btn-small" onclick="renameProfile('${profile.id}', '${escapeHtml(profile.name)}')">重命名</button>
         <button class="btn btn-danger btn-small" onclick="deleteProfile('${profile.id}')">删除</button>
       </div>
+      <div class="selected-badge">✓</div>
     </div>
   `}).join('');
 

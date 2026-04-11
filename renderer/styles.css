@@ -693,20 +693,6 @@ section:hover {
   box-shadow: 0 1px 4px var(--zen-light);
 }
 
-/* Subtle inner gradient */
-.profile-card::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.4) 0%, transparent 50%, rgba(0, 0, 0, 0.02) 100%);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity var(--transition);
-}
-
 .profile-card:hover {
   border-color: var(--primary);
   box-shadow: var(--shadow-hover);
@@ -717,33 +703,46 @@ section:hover {
   height: 4px;
 }
 
-.profile-card:hover::after {
-  opacity: 1;
-}
-
 .profile-card.selected {
   border-color: var(--success);
   background: linear-gradient(180deg, #ffffff 0%, rgba(52, 199, 89, 0.04) 100%);
   box-shadow: 0 0 0 1px var(--success), 0 4px 16px var(--success-light);
+  padding-right: 44px; /* 为勾选标记预留空间 */
 }
 
-.profile-card.selected::after {
-  content: '✓';
+/* 选中状态的勾选标记 - 使用独立元素避免冲突 */
+.profile-card .selected-badge {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  width: 22px;
-  height: 22px;
+  top: 16px;
+  right: 16px;
+  width: 24px;
+  height: 24px;
   background: var(--success-gradient);
   color: white;
   border-radius: 50%;
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: center;
   font-size: 13px;
   font-weight: bold;
-  animation: scaleInBounce 0.35s var(--transition-bounce);
   box-shadow: 0 2px 8px rgba(52, 199, 89, 0.4);
+  pointer-events: none;
+}
+
+.profile-card.selected .selected-badge {
+  display: flex;
+  animation: scaleInBounce 0.35s var(--transition-bounce);
+}
+
+@keyframes scaleInBounce {
+  from {
+    transform: scale(0);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 @keyframes scaleInBounce {
