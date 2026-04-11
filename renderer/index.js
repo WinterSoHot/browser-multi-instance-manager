@@ -6,6 +6,43 @@ let runningBrowsers = new Set();
 let statusCheckInterval = null;
 let selectedProfiles = new Set();
 let currentViewMode = 'list'; // 'list' or 'grid'
+let currentFilter = 'all'; // 'all', 'chrome', 'firefox', 'edge', 'zen'
+let searchQuery = ''; // Search query
+
+// Toast notification system
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+
+  const icons = {
+    success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>',
+    error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>',
+    warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>',
+    info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>'
+  };
+
+  toast.innerHTML = `
+    <div class="toast-icon">${icons[type]}</div>
+    <span class="toast-message">${escapeHtml(message)}</span>
+    <button class="toast-close" onclick="this.parentElement.remove()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
+  `;
+
+  container.appendChild(toast);
+
+  // Auto remove after 3 seconds
+  setTimeout(() => {
+    if (toast.parentElement) {
+      toast.style.animation = 'slideOut 0.3s var(--transition)';
+      setTimeout(() => toast.remove(), 300);
+    }
+  }, 3000);
+}
 
 // Load profiles on startup
 async function loadProfiles() {
@@ -44,15 +81,24 @@ function startStatusPolling() {
 function renderProfiles() {
   const profilesList = document.getElementById('profilesList');
 
-  if (profiles.length === 0) {
-    profilesList.innerHTML = '<p class="empty-message">暂无配置，请在上方添加</p>';
+  // Filter profiles based on current filter and search query
+  let filteredProfiles = profiles.filter(profile => {
+    const matchesFilter = currentFilter === 'all' || profile.browserType === currentFilter;
+    const matchesSearch = searchQuery === '' ||
+      profile.name.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesFilter && matchesSearch;
+  });
+
+  if (filteredProfiles.length === 0) {
+    const hasActiveFilter = currentFilter !== 'all' || searchQuery !== '';
+    profilesList.innerHTML = `<p class="empty-message">${hasActiveFilter ? '没有找到匹配的配置' : '暂无配置，请点击上方按钮添加'}</p>`;
     updateSelectAllButton();
     updateLaunchSelectedButton();
     updateCloseSelectedButton();
     return;
   }
 
-  profilesList.innerHTML = profiles.map(profile => {
+  profilesList.innerHTML = filteredProfiles.map(profile => {
     const isRunning = runningBrowsers.has(profile.id);
     const btnClass = isRunning ? 'btn-danger' : 'btn-success';
     const btnText = isRunning ? '关闭' : '启动';
@@ -60,14 +106,17 @@ function renderProfiles() {
     const isSelected = selectedProfiles.has(profile.id);
 
     return `
-    <div class="profile-card ${isSelected ? 'selected' : ''}" data-id="${profile.id}">
+    <div class="profile-card ${profile.browserType} ${isSelected ? 'selected' : ''}" data-id="${profile.id}">
       <div class="profile-info">
         <label class="checkbox-label">
           <input type="checkbox" class="profile-checkbox" data-id="${profile.id}" ${isSelected ? 'checked' : ''}>
           <span class="checkbox-custom"></span>
         </label>
         <h3>${escapeHtml(profile.name)}</h3>
-        <span class="browser-type">${profile.browserType}</span>
+        <span class="browser-type">
+          ${getBrowserIcon(profile.browserType)}
+          ${profile.browserType}
+        </span>
       </div>
       <div class="profile-actions">
         <button class="btn ${btnClass} btn-small" onclick="${launchFunc}('${profile.id}')">${btnText}</button>
@@ -102,6 +151,17 @@ function renderProfiles() {
   updateCloseSelectedButton();
 }
 
+// Get browser icon SVG
+function getBrowserIcon(browserType) {
+  const icons = {
+    chrome: `<svg class="browser-type-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#4285F4" fill-opacity="0.15"/><circle cx="12" cy="12" r="5" fill="#4285F4"/><path d="M12 7a5 5 0 015 5h5a10 10 0 00-10-10v5z" fill="#EA4335"/><path d="M12 17a5 5 0 01-5-5H2a10 10 0 0010 10v-5z" fill="#FBBC04"/><path d="M17 12a5 5 0 01-5 5v5a10 10 0 0010-10h-5z" fill="#34A853"/></svg>`,
+    firefox: `<svg class="browser-type-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#FF7139" fill-opacity="0.15"/><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-.29.02-.58.05-.86C6.24 12.36 8.9 14 12 14c2.21 0 4.21-.87 5.68-2.28.21.71.32 1.47.32 2.28 0 4.41-3.59 8-8 8z" fill="#FF7139"/></svg>`,
+    edge: `<svg class="browser-type-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#0078D7" fill-opacity="0.15"/><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.5 14.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5c.84 0 1.61.3 2.21.79L14 7l1.5 1.5-1.29 1.29c.49.6.79 1.37.79 2.21 0 1.93-1.57 3.5-3.5 3.5z" fill="#0078D7"/></svg>`,
+    zen: `<svg class="browser-type-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#5C5CE0" fill-opacity="0.15"/><path d="M12 2L4 7v10l8 5 8-5V7l-8-5zm0 2.5L18 8v8l-6 3.5L6 16V8l6-3.5z" fill="#5C5CE0"/></svg>`
+  };
+  return icons[browserType] || '';
+}
+
 // Escape HTML to prevent XSS
 function escapeHtml(text) {
   const div = document.createElement('div');
@@ -117,6 +177,7 @@ document.getElementById('addProfileForm').addEventListener('submit', async (e) =
   const profileName = document.getElementById('profileName').value.trim();
 
   if (!profileName) {
+    showToast('请输入配置名称', 'warning');
     return;
   }
 
@@ -128,8 +189,9 @@ document.getElementById('addProfileForm').addEventListener('submit', async (e) =
     renderProfiles();
     document.getElementById('profileName').value = '';
     document.getElementById('addModal').classList.remove('show');
+    showToast(`已新建配置 "${profileName}"`, 'success');
   } else {
-    alert('错误：' + result.error);
+    showToast('错误：' + result.error, 'error');
   }
 });
 
@@ -153,8 +215,9 @@ async function deleteProfile(profileId) {
   if (result.success) {
     profiles = profiles.filter(p => p.id !== profileId);
     renderProfiles();
+    showToast('配置已删除', 'success');
   } else {
-    alert('错误：' + result.error);
+    showToast('错误：' + result.error, 'error');
   }
 }
 
@@ -185,8 +248,9 @@ async function launchBrowserOnly(profileId) {
   if (result.success) {
     runningBrowsers.add(profileId);
     renderProfiles();
+    showToast('浏览器已启动', 'success');
   } else {
-    alert('启动浏览器失败：' + result.error);
+    showToast('启动浏览器失败：' + result.error, 'error');
   }
 }
 
@@ -196,8 +260,9 @@ async function closeBrowserOnly(profileId) {
   if (result.success) {
     runningBrowsers.delete(profileId);
     renderProfiles();
+    showToast('浏览器已关闭', 'success');
   } else {
-    alert('关闭浏览器失败：' + result.error);
+    showToast('关闭浏览器失败：' + result.error, 'error');
   }
 }
 
@@ -211,7 +276,7 @@ async function openProfileFolder(profileId) {
   const result = await window.browserAPI.openProfileFolder(profileId);
 
   if (!result.success) {
-    alert('打开文件夹失败：' + result.error);
+    showToast('打开文件夹失败：' + result.error, 'error');
   }
 }
 
@@ -228,7 +293,7 @@ document.getElementById('confirmRename').addEventListener('click', async () => {
   const newName = document.getElementById('newProfileName').value.trim();
 
   if (!newName) {
-    alert('请输入名称');
+    showToast('请输入名称', 'warning');
     return;
   }
 
@@ -248,8 +313,9 @@ document.getElementById('confirmRename').addEventListener('click', async () => {
     }
     renderProfiles();
     closeModal();
+    showToast(`已重命名为 "${newName}"`, 'success');
   } else {
-    alert('错误：' + result.error);
+    showToast('错误：' + result.error, 'error');
   }
 });
 
@@ -312,14 +378,14 @@ document.getElementById('openSettings').addEventListener('click', () => {
 // Launch selected profiles
 document.getElementById('launchSelectedBtn').addEventListener('click', async () => {
   if (selectedProfiles.size === 0) {
-    alert('请先选择要启动的配置');
+    showToast('请先选择要启动的配置', 'warning');
     return;
   }
 
   const toLaunch = Array.from(selectedProfiles).filter(id => !runningBrowsers.has(id));
 
   if (toLaunch.length === 0) {
-    alert('已选中的配置都已启动');
+    showToast('已选中的配置都已启动', 'info');
     return;
   }
 
@@ -334,19 +400,20 @@ document.getElementById('launchSelectedBtn').addEventListener('click', async () 
   // Clear selection after launch
   selectedProfiles.clear();
   renderProfiles();
+  showToast(`已启动 ${toLaunch.length} 个浏览器`, 'success');
 });
 
 // Close selected profiles
 document.getElementById('closeSelectedBtn').addEventListener('click', async () => {
   if (selectedProfiles.size === 0) {
-    alert('请先选择要关闭的配置');
+    showToast('请先选择要关闭的配置', 'warning');
     return;
   }
 
   const toClose = Array.from(selectedProfiles).filter(id => runningBrowsers.has(id));
 
   if (toClose.length === 0) {
-    alert('已选中的配置都已关闭');
+    showToast('已选中的配置都已关闭', 'info');
     return;
   }
 
@@ -361,6 +428,7 @@ document.getElementById('closeSelectedBtn').addEventListener('click', async () =
   // Clear selection after close
   selectedProfiles.clear();
   renderProfiles();
+  showToast(`已关闭 ${toClose.length} 个浏览器`, 'success');
 });
 
 // Select all profiles
@@ -374,6 +442,36 @@ document.getElementById('selectAllBtn').addEventListener('click', () => {
     allIds.forEach(id => selectedProfiles.add(id));
   }
   renderProfiles();
+});
+
+// Keyboard shortcuts for bulk actions
+document.addEventListener('keydown', (e) => {
+  // Cmd/Ctrl + A to select all
+  if ((e.metaKey || e.ctrlKey) && e.key === 'a' && document.activeElement.tagName !== 'INPUT') {
+    e.preventDefault();
+    const allIds = profiles.map(p => p.id);
+    const allSelected = allIds.every(id => selectedProfiles.has(id));
+
+    if (allSelected) {
+      selectedProfiles.clear();
+    } else {
+      allIds.forEach(id => selectedProfiles.add(id));
+    }
+    renderProfiles();
+  }
+
+  // Space to launch selected when profiles are selected
+  if (e.key === ' ' && document.activeElement.tagName !== 'INPUT' && selectedProfiles.size > 0) {
+    e.preventDefault();
+    const notRunningSelected = Array.from(selectedProfiles).filter(id => !runningBrowsers.has(id));
+    const runningSelected = Array.from(selectedProfiles).filter(id => runningBrowsers.has(id));
+
+    if (notRunningSelected.length > 0) {
+      document.getElementById('launchSelectedBtn').click();
+    } else if (runningSelected.length > 0) {
+      document.getElementById('closeSelectedBtn').click();
+    }
+  }
 });
 
 // Toggle profile selection
@@ -475,3 +573,39 @@ function setViewMode(mode) {
 
 // Load view mode on startup
 loadViewMode();
+
+// Search functionality
+const searchInput = document.getElementById('searchInput');
+if (searchInput) {
+  searchInput.addEventListener('input', (e) => {
+    searchQuery = e.target.value;
+    renderProfiles();
+  });
+
+  // Focus search with Cmd/Ctrl + F
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+      e.preventDefault();
+      searchInput.focus();
+      searchInput.select();
+    }
+
+    // Escape to clear search
+    if (e.key === 'Escape' && document.activeElement === searchInput) {
+      searchInput.value = '';
+      searchQuery = '';
+      renderProfiles();
+      searchInput.blur();
+    }
+  });
+}
+
+// Filter functionality
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFilter = btn.dataset.filter;
+    renderProfiles();
+  });
+});
