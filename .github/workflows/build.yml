@@ -67,12 +67,22 @@ jobs:
             exit 1
           fi
 
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          RELEASE_ERROR="$(mktemp)"
+          if gh api --silent "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>"$RELEASE_ERROR"; then
+            rm -f "$RELEASE_ERROR"
             echo "Release $TAG already exists; skipping publication."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
             echo "create_tag=false" >> "$GITHUB_OUTPUT"
             exit 0
+          else
+            RELEASE_STATUS=$?
+            if [ "$RELEASE_STATUS" -ne 1 ] || ! grep -q "HTTP 404" "$RELEASE_ERROR"; then
+              cat "$RELEASE_ERROR" >&2
+              rm -f "$RELEASE_ERROR"
+              exit "$RELEASE_STATUS"
+            fi
           fi
+          rm -f "$RELEASE_ERROR"
 
           TAG_REF="refs/tags/$TAG"
           if git ls-remote --exit-code --tags origin "$TAG_REF" >/dev/null 2>&1; then
@@ -86,6 +96,12 @@ jobs:
             echo "should_release=true" >> "$GITHUB_OUTPUT"
             echo "create_tag=false" >> "$GITHUB_OUTPUT"
             exit 0
+          else
+            TAG_STATUS=$?
+            if [ "$TAG_STATUS" -ne 2 ]; then
+              echo "Unable to determine whether remote tag $TAG exists." >&2
+              exit "$TAG_STATUS"
+            fi
           fi
 
           echo "should_release=true" >> "$GITHUB_OUTPUT"
@@ -124,6 +140,7 @@ jobs:
         with:
           name: dmg
           path: dist/*.dmg
+          if-no-files-found: error
           retention-days: 5
 
   build-win:
@@ -159,6 +176,7 @@ jobs:
         with:
           name: exe
           path: dist/*.exe
+          if-no-files-found: error
           retention-days: 5
 
   release:
@@ -179,21 +197,49 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Derive release tag
+      - name: Load validated release state
         shell: bash
+        env:
+          VALIDATED_TAG: ${{ needs.prepare.outputs.tag }}
+          PREPARE_CREATE_TAG: ${{ needs.prepare.outputs.create_tag }}
         run: |
-          node <<'NODE'
-          const fs = require('fs');
-          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const tag = 'v' + packageJson.version;
-          fs.appendFileSync(process.env.GITHUB_ENV, `TAG=${tag}\n`);
-          NODE
+          set -euo pipefail
+          # TAG is the validated "v" + version derived from package.json by prepare.
+          if [ -z "$VALIDATED_TAG" ]; then
+            echo "Prepare did not provide a release tag." >&2
+            exit 1
+          fi
+          if [ "$PREPARE_CREATE_TAG" != "true" ] && [ "$PREPARE_CREATE_TAG" != "false" ]; then
+            echo "Prepare returned an invalid create_tag state: $PREPARE_CREATE_TAG" >&2
+            exit 1
+          fi
+          echo "TAG=$VALIDATED_TAG" >> "$GITHUB_ENV"
+          echo "PREPARE_CREATE_TAG=$PREPARE_CREATE_TAG" >> "$GITHUB_ENV"
 
       - name: Create or verify annotated tag
+        id: tag-state
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           TAG_REF="refs/tags/$TAG"
+          RELEASE_ERROR="$(mktemp)"
+          if gh api --silent "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>"$RELEASE_ERROR"; then
+            rm -f "$RELEASE_ERROR"
+            echo "Release $TAG was published while this run was building; skipping duplicate publication."
+            echo "should_create_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          else
+            RELEASE_STATUS=$?
+            if [ "$RELEASE_STATUS" -ne 1 ] || ! grep -q "HTTP 404" "$RELEASE_ERROR"; then
+              cat "$RELEASE_ERROR" >&2
+              rm -f "$RELEASE_ERROR"
+              exit "$RELEASE_STATUS"
+            fi
+          fi
+          rm -f "$RELEASE_ERROR"
+
           if git ls-remote --exit-code --tags origin "$TAG_REF" >/dev/null 2>&1; then
             git fetch --no-tags origin "$TAG_REF:$TAG_REF"
             git show-ref --tags --verify --quiet "$TAG_REF"
@@ -202,12 +248,28 @@ jobs:
               echo "Existing tag $TAG points to $TAG_COMMIT, not $GITHUB_SHA." >&2
               exit 1
             fi
+            if [ "$PREPARE_CREATE_TAG" = "true" ]; then
+              echo "Tag $TAG appeared after prepare and resolves to this commit; safely resuming."
+            fi
           else
+            TAG_STATUS=$?
+            if [ "$TAG_STATUS" -ne 2 ]; then
+              echo "Unable to determine whether remote tag $TAG exists." >&2
+              exit "$TAG_STATUS"
+            fi
+            if [ "$PREPARE_CREATE_TAG" != "true" ]; then
+              echo "Prepare expected tag $TAG to exist, but it is now absent." >&2
+              exit 1
+            fi
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a "$TAG" "$GITHUB_SHA" -m "$TAG"
             git push origin "$TAG"
           fi
+          echo "should_create_release=true" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
+        if: steps.tag-state.outputs.should_create_release == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
