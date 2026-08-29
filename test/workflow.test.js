@@ -20,41 +20,88 @@ function blockBetween(text, start, end) {
   return text.slice(contentStart, endIndex);
 }
 
-function jobBlock(name) {
+function jobBlockFromText(text, name) {
   const marker = `  ${name}:\n`;
-  const startIndex = workflow.indexOf(marker);
+  const startIndex = text.indexOf(marker);
   assert.notEqual(startIndex, -1, `Missing job: ${name}`);
 
   const contentStart = startIndex + marker.length;
-  const nextJobOffset = workflow.slice(contentStart).search(/^  [a-z][a-z0-9-]*:\n/m);
+  const nextJobOffset = text.slice(contentStart).search(/^  [a-z][a-z0-9-]*:\n/m);
   return nextJobOffset === -1
-    ? workflow.slice(contentStart)
-    : workflow.slice(contentStart, contentStart + nextJobOffset);
+    ? text.slice(contentStart)
+    : text.slice(contentStart, contentStart + nextJobOffset);
 }
 
-function stepBlock(jobName, stepName) {
-  const block = jobBlock(jobName);
+function jobBlock(name) {
+  return jobBlockFromText(workflow, name);
+}
+
+function stepBlockFromJobBlock(block, jobName, stepName) {
   const marker = `      - name: ${stepName}\n`;
   const startIndex = block.indexOf(marker);
   assert.notEqual(startIndex, -1, `Missing step: ${jobName} / ${stepName}`);
 
   const contentStart = startIndex + marker.length;
-  const nextStepOffset = block.slice(contentStart).search(/^      - name: /m);
+  const nextStepOffset = block.slice(contentStart).search(/^      - /m);
   return nextStepOffset === -1
     ? block.slice(contentStart)
     : block.slice(contentStart, contentStart + nextStepOffset);
 }
 
-function runStepBody(jobName, stepName) {
-  const block = stepBlock(jobName, stepName);
-  const marker = '        run: |\n';
-  const startIndex = block.indexOf(marker);
-  assert.notEqual(startIndex, -1, `Missing run block: ${jobName} / ${stepName}`);
+function stepBlock(jobName, stepName) {
+  return stepBlockFromJobBlock(jobBlock(jobName), jobName, stepName);
+}
 
-  return block
-    .slice(startIndex + marker.length)
-    .replace(/^ {10}/gm, '')
+function runStepBodyFromStepBlock(block, jobName, stepName) {
+  const runMatch = /^ {8}run: \|\n/m.exec(block);
+  assert.notEqual(runMatch, null, `Missing run block: ${jobName} / ${stepName}`);
+
+  const runIndent = 8;
+  const remainder = block.slice(runMatch.index + runMatch[0].length);
+  const lines = remainder.split('\n');
+  const bodyLines = [];
+
+  for (const line of lines) {
+    if (line.trim() === '') {
+      bodyLines.push('');
+      continue;
+    }
+
+    const indent = line.match(/^ */)[0].length;
+    if (indent <= runIndent) {
+      break;
+    }
+
+    bodyLines.push(line);
+  }
+
+  const nonBlankIndents = bodyLines
+    .filter((line) => line.trim() !== '')
+    .map((line) => line.match(/^ */)[0].length);
+  const commonIndent = nonBlankIndents.length === 0 ? 0 : Math.min(...nonBlankIndents);
+
+  return bodyLines
+    .map((line) => {
+      if (line.trim() === '') {
+        return '';
+      }
+
+      return line.slice(commonIndent);
+    })
+    .join('\n')
     .trimEnd();
+}
+
+function runStepBody(jobName, stepName) {
+  return runStepBodyFromStepBlock(stepBlock(jobName, stepName), jobName, stepName);
+}
+
+function runStepBodyFromText(text, jobName, stepName) {
+  return runStepBodyFromStepBlock(
+    stepBlockFromJobBlock(jobBlockFromText(text, jobName), jobName, stepName),
+    jobName,
+    stepName,
+  );
 }
 
 function escapeRegExp(value) {
@@ -69,8 +116,87 @@ function assertHasExactLine(text, line) {
   assert.match(text, new RegExp(`^\\s*${escapeRegExp(line)}\\s*$`, 'm'));
 }
 
+function containsHereDocOperator(text) {
+  return /^\s*(?!#).*<<-?\s*\S+/m.test(text);
+}
+
+function containsNewlineSpanningQuotedString(text) {
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inSingleQuote) {
+      if (char === '\n') {
+        return true;
+      }
+      if (char === '\'') {
+        inSingleQuote = false;
+      }
+      continue;
+    }
+
+    if (inDoubleQuote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === '\n') {
+        return true;
+      }
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inDoubleQuote = false;
+      }
+      continue;
+    }
+
+    if (char === '#') {
+      while (index < text.length && text[index] !== '\n') {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (char === '\'') {
+      inSingleQuote = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inDoubleQuote = true;
+    }
+  }
+
+  return false;
+}
+
+function hasDisallowedShellBodySyntax(text) {
+  return containsHereDocOperator(text) || containsNewlineSpanningQuotedString(text);
+}
+
 function matchesExactLines(text, lines) {
+  if (hasDisallowedShellBodySyntax(text)) {
+    return false;
+  }
+
   return lines.every((line) => hasExactLine(text, line));
+}
+
+function replaceLineWithDecoy(lines, index, mode) {
+  const updated = [...lines];
+  const line = lines[index];
+
+  updated[index] = mode === 'inline-comment'
+    ? `true # ${line}`
+    : `printf '%s\\n' '${line}'`;
+
+  return updated.join('\n');
 }
 
 const jobsIndex = workflow.indexOf('jobs:\n');
@@ -126,23 +252,80 @@ test('prepare accepts only a same-commit annotated existing tag', () => {
   assert.equal(matchesExactLines(prepareReleaseStateBody, annotatedTagContractLines), true);
 });
 
-test('workflow contract matchers reject inline-comment and echo-only fakes', () => {
-  const fakeRemoteState = [
-    'echo "RELEASE_STATUS guard starts here"',
-    'true # if [ "$RELEASE_STATUS" -ne 1 ] || ! grep -q "HTTP 404" "$RELEASE_ERROR"; then',
-    'echo "TAG_STATUS guard starts here"',
-    'true # if [ "$TAG_STATUS" -ne 2 ]; then',
-    'echo "Unable to determine whether remote tag $TAG exists."',
-  ].join('\n');
-  const fakeAnnotatedTag = [
-    'echo \'TAG_TYPE="$(git cat-file -t "$TAG")"\'',
-    'echo \'if [ "$TAG_TYPE" != "tag" ]; then\'',
-    'echo \'TAG_COMMIT="$(git rev-list -n 1 "$TAG")"\'',
-    'echo \'if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then\'',
+test('workflow step extraction excludes following unnamed step decoys', () => {
+  const syntheticWorkflow = [
+    'jobs:',
+    '  prepare:',
+    '    steps:',
+    '      - name: Determine release state',
+    '        shell: bash',
+    '        run: |',
+    '          set -euo pipefail',
+    '',
+    '      - run: |',
+    '          RELEASE_STATUS=$?',
+    '          if [ "$RELEASE_STATUS" -ne 1 ] || ! grep -q "HTTP 404" "$RELEASE_ERROR"; then',
+    '          TAG_STATUS=$?',
+    '          if [ "$TAG_STATUS" -ne 2 ]; then',
   ].join('\n');
 
-  assert.equal(matchesExactLines(fakeRemoteState, remoteStateContractLines), false);
-  assert.equal(matchesExactLines(fakeAnnotatedTag, annotatedTagContractLines), false);
+  const extracted = runStepBodyFromText(syntheticWorkflow, 'prepare', 'Determine release state');
+  assert.equal(matchesExactLines(extracted, remoteStateContractLines), false);
+  assert.equal(extracted.trim(), 'set -euo pipefail');
+});
+
+test('workflow contract matchers reject line-level inline-comment and echo-only fakes', async (t) => {
+  const lineSets = [
+    ['remote-state', remoteStateContractLines],
+    ['annotated-tag', annotatedTagContractLines],
+  ];
+  const modes = ['inline-comment', 'echo-only'];
+
+  for (const [label, lines] of lineSets) {
+    for (let index = 0; index < lines.length; index += 1) {
+      for (const mode of modes) {
+        await t.test(`${label} rejects ${mode} decoy for ${lines[index]}`, () => {
+          const fakeBody = replaceLineWithDecoy(lines, index, mode);
+          assert.equal(
+            matchesExactLines(fakeBody, lines),
+            false,
+            `${label} should reject ${mode} decoy for ${lines[index]}`,
+          );
+        });
+      }
+    }
+  }
+});
+
+test('workflow contract matchers reject heredoc and multiline quoted decoys', async (t) => {
+  const lineSets = [
+    ['remote-state', remoteStateContractLines],
+    ['annotated-tag', annotatedTagContractLines],
+  ];
+  const decoyBodies = {
+    heredoc: (lines) => [
+      "cat <<'EOF'",
+      ...lines,
+      'EOF',
+    ].join('\n'),
+    'multiline-quoted': (lines) => [
+      'printf "%s\\n" "',
+      ...lines,
+      '"',
+    ].join('\n'),
+  };
+
+  for (const [label, lines] of lineSets) {
+    for (const [mode, buildBody] of Object.entries(decoyBodies)) {
+      await t.test(`${label} rejects ${mode} decoy`, () => {
+        assert.equal(
+          matchesExactLines(buildBody(lines), lines),
+          false,
+          `${label} should reject ${mode} decoys`,
+        );
+      });
+    }
+  }
 });
 
 test('platform jobs always test and conditionally package and upload', () => {
