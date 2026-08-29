@@ -1,5 +1,7 @@
 // Render process logic - Main page
 
+const { escapeHtml, getRunningProfileIds, summarizeResults } = window.viewUtils;
+
 let profiles = [];
 let currentRenameId = null;
 let runningBrowsers = new Set();
@@ -25,13 +27,15 @@ function showToast(message, type = 'info') {
   toast.innerHTML = `
     <div class="toast-icon">${icons[type]}</div>
     <span class="toast-message">${escapeHtml(message)}</span>
-    <button class="toast-close" onclick="this.parentElement.remove()">
+    <button class="toast-close" type="button">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <line x1="18" y1="6" x2="6" y2="18"></line>
         <line x1="6" y1="6" x2="18" y2="18"></line>
       </svg>
     </button>
   `;
+
+  toast.querySelector('.toast-close').addEventListener('click', () => toast.remove());
 
   container.appendChild(toast);
 
@@ -47,6 +51,11 @@ function showToast(message, type = 'info') {
 // Load profiles on startup
 async function loadProfiles() {
   profiles = await window.browserAPI.getProfiles();
+  const runningProfileIds = await getRunningProfileIds(
+    profiles,
+    window.browserAPI.getBrowserStatus,
+  );
+  runningBrowsers = new Set(runningProfileIds);
   renderProfiles();
 
   // Start polling browser status
@@ -106,23 +115,23 @@ function renderProfiles() {
     const isSelected = selectedProfiles.has(profile.id);
 
     return `
-    <div class="profile-card ${profile.browserType} ${isSelected ? 'selected' : ''}" data-id="${profile.id}">
+    <div class="profile-card ${escapeHtml(profile.browserType)} ${isSelected ? 'selected' : ''}" data-id="${escapeHtml(profile.id)}">
       <div class="profile-info">
         <label class="checkbox-label">
-          <input type="checkbox" class="profile-checkbox" data-id="${profile.id}" ${isSelected ? 'checked' : ''}>
+          <input type="checkbox" class="profile-checkbox" data-id="${escapeHtml(profile.id)}" ${isSelected ? 'checked' : ''}>
           <span class="checkbox-custom"></span>
         </label>
         <h3>${escapeHtml(profile.name)}</h3>
         <span class="browser-type">
           ${getBrowserIcon(profile.browserType)}
-          ${profile.browserType}
+          ${escapeHtml(profile.browserType)}
         </span>
       </div>
       <div class="profile-actions">
-        <button class="btn ${btnClass} btn-small" onclick="${launchFunc}('${profile.id}')">${btnText}</button>
-        <button class="btn btn-secondary btn-small" onclick="openProfileFolder('${profile.id}')">文件夹</button>
-        <button class="btn btn-warning btn-small" onclick="renameProfile('${profile.id}', '${escapeHtml(profile.name)}')">重命名</button>
-        <button class="btn btn-danger btn-small" onclick="deleteProfile('${profile.id}')">删除</button>
+        <button class="btn ${btnClass} btn-small" data-profile-action="${launchFunc}" data-profile-id="${escapeHtml(profile.id)}">${btnText}</button>
+        <button class="btn btn-secondary btn-small" data-profile-action="open-folder" data-profile-id="${escapeHtml(profile.id)}">文件夹</button>
+        <button class="btn btn-warning btn-small" data-profile-action="rename" data-profile-id="${escapeHtml(profile.id)}">重命名</button>
+        <button class="btn btn-danger btn-small" data-profile-action="delete" data-profile-id="${escapeHtml(profile.id)}">删除</button>
       </div>
       <div class="selected-badge">✓</div>
     </div>
@@ -152,6 +161,22 @@ function renderProfiles() {
   updateCloseSelectedButton();
 }
 
+document.getElementById('profilesList').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-profile-action]');
+  if (!button) return;
+
+  const profileId = button.dataset.profileId;
+  const actions = {
+    launchBrowserOnly,
+    closeBrowserOnly,
+    'open-folder': openProfileFolder,
+    rename: renameProfile,
+    delete: deleteProfile
+  };
+  const action = actions[button.dataset.profileAction];
+  action?.(profileId);
+});
+
 // Get browser icon SVG
 function getBrowserIcon(browserType) {
   const icons = {
@@ -161,13 +186,6 @@ function getBrowserIcon(browserType) {
     zen: `<svg class="browser-type-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#5C5CE0" fill-opacity="0.15"/><path d="M12 2L4 7v10l8 5 8-5V7l-8-5zm0 2.5L18 8v8l-6 3.5L6 16V8l6-3.5z" fill="#5C5CE0"/></svg>`
   };
   return icons[browserType] || '';
-}
-
-// Escape HTML to prevent XSS
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
 }
 
 // Add new profile
@@ -198,13 +216,17 @@ document.getElementById('addProfileForm').addEventListener('submit', async (e) =
 
 // Delete profile
 async function deleteProfile(profileId) {
-  if (!confirm('确定要删除此配置吗？')) {
+  if (!confirm('确定从列表移除此配置吗？本地浏览器数据将保留。')) {
     return;
   }
 
   // If browser is running, close it first
   if (runningBrowsers.has(profileId)) {
-    await window.browserAPI.closeBrowser(profileId);
+    const closeResult = await window.browserAPI.closeBrowser(profileId);
+    if (!closeResult.success) {
+      showToast('关闭浏览器失败：' + closeResult.error, 'error');
+      return;
+    }
     runningBrowsers.delete(profileId);
   }
 
@@ -216,7 +238,7 @@ async function deleteProfile(profileId) {
   if (result.success) {
     profiles = profiles.filter(p => p.id !== profileId);
     renderProfiles();
-    showToast('配置已删除', 'success');
+    showToast('已从列表移除，本地浏览器数据已保留', 'success');
   } else {
     showToast('错误：' + result.error, 'error');
   }
@@ -282,9 +304,15 @@ async function openProfileFolder(profileId) {
 }
 
 // Rename profile
-async function renameProfile(profileId, currentName) {
+async function renameProfile(profileId) {
+  const profile = profiles.find(p => p.id === profileId);
+  if (!profile) {
+    showToast('错误：配置不存在', 'error');
+    return;
+  }
+
   currentRenameId = profileId;
-  document.getElementById('newProfileName').value = currentName;
+  document.getElementById('newProfileName').value = profile.name;
   document.getElementById('renameModal').classList.add('show');
   document.getElementById('newProfileName').focus();
 }
@@ -391,17 +419,23 @@ document.getElementById('launchSelectedBtn').addEventListener('click', async () 
   }
 
   // Launch all selected browsers concurrently
-  await Promise.all(toLaunch.map(async (profileId) => {
-    const result = await window.browserAPI.launchBrowser(profileId);
+  const results = await Promise.all(toLaunch.map(async (profileId) => {
+    let result;
+    try {
+      result = await window.browserAPI.launchBrowser(profileId);
+    } catch (error) {
+      result = { success: false, error: error.message };
+    }
     if (result.success) {
       runningBrowsers.add(profileId);
     }
+    return result;
   }));
 
   // Clear selection after launch
   selectedProfiles.clear();
   renderProfiles();
-  showToast(`已启动 ${toLaunch.length} 个浏览器`, 'success');
+  showBatchResult('启动', results);
 });
 
 // Close selected profiles
@@ -419,18 +453,36 @@ document.getElementById('closeSelectedBtn').addEventListener('click', async () =
   }
 
   // Close all selected browsers concurrently
-  await Promise.all(toClose.map(async (profileId) => {
-    const result = await window.browserAPI.closeBrowser(profileId);
+  const results = await Promise.all(toClose.map(async (profileId) => {
+    let result;
+    try {
+      result = await window.browserAPI.closeBrowser(profileId);
+    } catch (error) {
+      result = { success: false, error: error.message };
+    }
     if (result.success) {
       runningBrowsers.delete(profileId);
     }
+    return result;
   }));
 
   // Clear selection after close
   selectedProfiles.clear();
   renderProfiles();
-  showToast(`已关闭 ${toClose.length} 个浏览器`, 'success');
+  showBatchResult('关闭', results);
 });
+
+function showBatchResult(action, results) {
+  const { successCount, failureCount, errors } = summarizeResults(results);
+  if (failureCount === 0) {
+    showToast(`已${action} ${successCount} 个浏览器`, 'success');
+    return;
+  }
+
+  const details = errors.length > 0 ? `：${errors.join('；')}` : '';
+  const type = successCount > 0 ? 'warning' : 'error';
+  showToast(`${action}成功 ${successCount} 个，失败 ${failureCount} 个${details}`, type);
+}
 
 // Select all profiles - 只更新必要的 DOM，避免整体闪烁
 document.getElementById('selectAllBtn').addEventListener('click', () => {

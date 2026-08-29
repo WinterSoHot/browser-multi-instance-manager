@@ -4,6 +4,7 @@
   "description": "浏览器多实例管理器 - Browser multi-instance management desktop application",
   "main": "main.js",
   "scripts": {
+    "test": "node --test test/*.test.js",
     "start": "electron .",
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",
@@ -34,6 +35,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "lib/**/*",
       "renderer/**/*",
       "package.json"
     ],

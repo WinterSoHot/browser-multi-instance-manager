@@ -1,8 +1,17 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
-const { spawn } = require("child_process");
 const fs = require("fs");
 const Store = require("electron-store");
+const { normalizeBrowserExecutablePath } = require("./lib/browser-paths");
+const { BrowserProcessManager } = require("./lib/browser-process-manager");
+const {
+  areProfileNamesEqual,
+  createProfileRecord,
+  isStoredProfilePathSafe,
+  resolveProfilePath,
+  validateBrowserSettings,
+  validateProfileInput,
+} = require("./lib/profile-utils");
 
 // Initialize store
 const store = new Store({
@@ -14,6 +23,7 @@ const store = new Store({
 });
 
 let mainWindow;
+const browserProcessManager = new BrowserProcessManager();
 
 // Get current platform
 function getPlatform() {
@@ -58,7 +68,12 @@ function getBrowserExecutable(browserType) {
 
   // If custom path is set, use it
   if (customPath) {
-    return customPath;
+    try {
+      const validatedPath = validateBrowserSettings({ [browserType]: customPath })[browserType];
+      return normalizeBrowserExecutablePath(browserType, validatedPath);
+    } catch {
+      return null;
+    }
   }
 
   // Use default paths
@@ -99,53 +114,11 @@ function getProfilesDir() {
   return profilesDir;
 }
 
-// Track running browser processes by profile ID
-const runningBrowsers = new Map();
-
-// Launch browser with profile
-function launchBrowser(browserType, profilePath) {
-  const exePath = getBrowserExecutable(browserType);
-
-  if (!exePath || !fs.existsSync(exePath)) {
-    return { success: false, error: `${browserType} not found at ${exePath}` };
-  }
-
-  let args = [];
-
-  switch (browserType) {
-    case "chrome":
-    case "edge":
-      args = ["--user-data-dir=" + profilePath];
-      break;
-    case "firefox":
-    case "zen":
-      args = ["-profile", profilePath];
-      break;
-    default:
-      return { success: false, error: "Unknown browser type" };
-  }
-
-  try {
-    const child = spawn(exePath, args, { detached: true, stdio: "ignore" });
-    child.unref();
-
-    // Wait a bit to get the actual browser PID (for Chrome/Edge, the spawn might be a launcher)
-    setTimeout(() => {
-      // On macOS, the actual browser process is different from the spawn
-      // We'll monitor by process name instead
-    }, 1000);
-
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-}
-
 // Create profile directory
 function createProfileDir(browserType, profileName) {
   const profilesDir = getProfilesDir();
   const browserDir = path.join(profilesDir, browserType);
-  const profileDir = path.join(browserDir, profileName);
+  const profileDir = resolveProfilePath(profilesDir, browserType, profileName);
 
   if (!fs.existsSync(browserDir)) {
     fs.mkdirSync(browserDir, { recursive: true });
@@ -164,6 +137,9 @@ function createWindow() {
     height: 600,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
     },
   });
 
@@ -175,23 +151,27 @@ ipcMain.handle("get-profiles", () => {
   return store.get("profiles", []);
 });
 
-ipcMain.handle("add-profile", (event, { browserType, profileName }) => {
-  const profiles = store.get("profiles", []);
+ipcMain.handle("add-profile", (event, payload = {}) => {
+  const { browserType, profileName } = payload;
+  try {
+    validateProfileInput(browserType, profileName);
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 
+  const profiles = store.get("profiles", []);
   // Check if profile name already exists
-  if (profiles.some((p) => p.name === profileName)) {
+  if (profiles.some((p) => areProfileNamesEqual(p.name, profileName))) {
     return { success: false, error: "Profile name already exists" };
   }
 
   const profilePath = createProfileDir(browserType, profileName);
 
-  const newProfile = {
-    id: Date.now().toString(),
+  const newProfile = createProfileRecord({
     browserType,
-    name: profileName,
-    path: profilePath,
-    createdAt: new Date().toISOString(),
-  };
+    profileName,
+    profilePath,
+  });
 
   profiles.push(newProfile);
   store.set("profiles", profiles);
@@ -201,12 +181,19 @@ ipcMain.handle("add-profile", (event, { browserType, profileName }) => {
 
 ipcMain.handle("delete-profile", (event, profileId) => {
   const profiles = store.get("profiles", []);
+  if (!profiles.some((profile) => profile.id === profileId)) {
+    return { success: false, error: "Profile not found" };
+  }
+  if (browserProcessManager.isRunning(profileId)) {
+    return { success: false, error: "Close the browser before removing its profile" };
+  }
+
   const filteredProfiles = profiles.filter((p) => p.id !== profileId);
   store.set("profiles", filteredProfiles);
   return { success: true };
 });
 
-ipcMain.handle("launch-browser", (event, profileId) => {
+ipcMain.handle("launch-browser", async (event, profileId) => {
   const profiles = store.get("profiles", []);
   const profile = profiles.find((p) => p.id === profileId);
 
@@ -214,142 +201,63 @@ ipcMain.handle("launch-browser", (event, profileId) => {
     return { success: false, error: "Profile not found" };
   }
 
-  const result = launchBrowser(profile.browserType, profile.path);
-
-  if (result.success) {
-    // Store browser info for tracking - use profileId as key
-    // For now we store the profile path to identify the browser instance
-    runningBrowsers.set(profileId, {
-      profileId,
-      browserType: profile.browserType,
-      profilePath: profile.path,
-      startedAt: Date.now()
-    });
+  if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
+    return { success: false, error: "Profile path is invalid" };
   }
 
-  return result;
-});
-
-ipcMain.handle("close-browser", (event, profileId) => {
-  const browserInfo = runningBrowsers.get(profileId);
-  if (!browserInfo) {
-    return { success: false, error: "Browser not running" };
+  const executablePath = getBrowserExecutable(profile.browserType);
+  if (!executablePath || !fs.existsSync(executablePath)) {
+    return {
+      success: false,
+      error: `${profile.browserType} not found at ${executablePath}`,
+    };
   }
 
-  try {
-    const { exec } = require('child_process');
-    const isWin = process.platform === 'win32';
-    const isMac = process.platform === 'darwin';
-    const profilePath = browserInfo.profilePath;
-
-    if (isWin) {
-      // Windows: find and kill process with matching user-data-dir
-      // Use wmic to find process with command line containing the profile path
-      const processName = browserInfo.browserType === 'chrome' ? 'chrome.exe' :
-                          browserInfo.browserType === 'edge' ? 'msedge.exe' :
-                          browserInfo.browserType === 'firefox' ? 'firefox.exe' :
-                          browserInfo.browserType === 'zen' ? 'zen.exe' : '';
-
-      exec(`wmic process where "name='${processName}' and CommandLine like '%${profilePath}%'" get ProcessId`, (err, stdout) => {
-        if (!err && stdout) {
-          const pids = stdout.split('\n')
-            .slice(1)
-            .map(line => line.trim())
-            .filter(line => line.match(/^\d+$/));
-          pids.forEach(pid => {
-            exec(`taskkill /PID ${pid}`, () => {});
-          });
-        }
-      });
-    } else if (isMac) {
-      // macOS: find process with matching profile path in arguments
-      const processName = browserInfo.browserType === 'chrome' ? 'Google Chrome' :
-                          browserInfo.browserType === 'edge' ? 'Microsoft Edge' :
-                          browserInfo.browserType === 'firefox' ? 'Firefox' :
-                          browserInfo.browserType === 'zen' ? 'Zen' : '';
-
-      const binaryName = browserInfo.browserType === 'chrome' ? 'Google Chrome' :
-                         browserInfo.browserType === 'edge' ? 'Microsoft Edge' :
-                         browserInfo.browserType === 'firefox' ? 'firefox' :
-                         browserInfo.browserType === 'zen' ? 'zen' : '';
-
-      // Find PIDs with matching --user-data-dir or -profile argument
-      exec(`pgrep -f "${binaryName}.*${profilePath}"`, (err, stdout) => {
-        if (!err && stdout) {
-          const pids = stdout.trim().split('\n').filter(p => p);
-          pids.forEach(pid => {
-            exec(`kill -15 ${pid}`, () => {});
-          });
-        }
-      });
-    }
-
-    runningBrowsers.delete(profileId);
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle("get-browser-status", async (event, profileId) => {
-  const browserInfo = runningBrowsers.get(profileId);
-  if (!browserInfo) {
-    return { running: false };
-  }
-
-  // Check if the browser process is still running (async)
-  return new Promise((resolve) => {
-    const { exec } = require('child_process');
-    const isWin = process.platform === 'win32';
-
-    if (isWin) {
-      const processName = browserInfo.browserType === 'chrome' ? 'chrome.exe' :
-                          browserInfo.browserType === 'edge' ? 'msedge.exe' :
-                          browserInfo.browserType === 'firefox' ? 'firefox.exe' :
-                          browserInfo.browserType === 'zen' ? 'zen.exe' : '';
-
-      exec(`tasklist /FI "IMAGENAME eq ${processName}" /NH`, (err, stdout) => {
-        if (err || !stdout.includes(processName)) {
-          runningBrowsers.delete(profileId);
-          resolve({ running: false });
-        } else {
-          resolve({ running: true });
-        }
-      });
-    } else {
-      // macOS: check if app is running
-      const appName = browserInfo.browserType === 'chrome' ? 'Google Chrome' :
-                      browserInfo.browserType === 'edge' ? 'Microsoft Edge' :
-                      browserInfo.browserType === 'firefox' ? 'Firefox' :
-                      browserInfo.browserType === 'zen' ? 'Zen' : '';
-
-      exec(`osascript -e 'tell application "System Events" to name of every process whose background only is false'`, (err, stdout) => {
-        const isRunning = !err && stdout.includes(appName);
-        if (!isRunning) {
-          runningBrowsers.delete(profileId);
-        }
-        resolve({ running: isRunning });
-      });
-    }
+  return browserProcessManager.launch({
+    profileId,
+    browserType: profile.browserType,
+    profilePath: profile.path,
+    executablePath,
   });
 });
 
-ipcMain.handle("rename-profile", (event, { profileId, newName }) => {
+ipcMain.handle("close-browser", async (event, profileId) => {
+  return browserProcessManager.close(profileId);
+});
+
+ipcMain.handle("get-browser-status", (event, profileId) => {
+  return browserProcessManager.getStatus(profileId);
+});
+
+ipcMain.handle("rename-profile", (event, payload = {}) => {
+  const { profileId, newName } = payload;
   const profiles = store.get("profiles", []);
-
-  // Check if new name already exists
-  if (profiles.some((p) => p.name === newName && p.id !== profileId)) {
-    return { success: false, error: "Profile name already exists" };
-  }
-
   const profileIndex = profiles.findIndex((p) => p.id === profileId);
   if (profileIndex === -1) {
     return { success: false, error: "Profile not found" };
   }
+  if (browserProcessManager.isRunning(profileId)) {
+    return { success: false, error: "Close the browser before renaming its profile" };
+  }
 
   const profile = profiles[profileIndex];
+  try {
+    validateProfileInput(profile.browserType, newName);
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+
+  // Check if new name already exists after validating the payload.
+  if (profiles.some((p) => p.id !== profileId && areProfileNamesEqual(p.name, newName))) {
+    return { success: false, error: "Profile name already exists" };
+  }
+
+  if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
+    return { success: false, error: "Profile path is invalid" };
+  }
+
   const oldPath = profile.path;
-  const newPath = path.join(path.dirname(oldPath), newName);
+  const newPath = resolveProfilePath(getProfilesDir(), profile.browserType, newName);
 
   // Rename directory on filesystem
   if (fs.existsSync(oldPath)) {
@@ -370,7 +278,7 @@ ipcMain.handle("rename-profile", (event, { profileId, newName }) => {
   return { success: true, profile: profile };
 });
 
-ipcMain.handle("open-profile-folder", (event, profileId) => {
+ipcMain.handle("open-profile-folder", async (event, profileId) => {
   const profiles = store.get("profiles", []);
   const profile = profiles.find((p) => p.id === profileId);
 
@@ -378,11 +286,18 @@ ipcMain.handle("open-profile-folder", (event, profileId) => {
     return { success: false, error: "Profile not found" };
   }
 
+  if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
+    return { success: false, error: "Profile path is invalid" };
+  }
+
   if (!fs.existsSync(profile.path)) {
     return { success: false, error: "Profile folder not found" };
   }
 
-  shell.openPath(profile.path);
+  const errorMessage = await shell.openPath(profile.path);
+  if (errorMessage) {
+    return { success: false, error: errorMessage };
+  }
   return { success: true };
 });
 
@@ -392,8 +307,13 @@ ipcMain.handle("get-browser-settings", () => {
 });
 
 ipcMain.handle("set-browser-settings", (event, settings) => {
-  store.set("browserSettings", settings);
-  return { success: true };
+  try {
+    const validatedSettings = validateBrowserSettings(settings);
+    store.set("browserSettings", validatedSettings);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle("get-default-browser-path", (event, browserType) => {
@@ -424,6 +344,12 @@ ipcMain.handle("browse-folder", async (event, defaultPath) => {
 
 app.whenReady().then(() => {
   createWindow();
+});
+
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
 });
 
 app.on("window-all-closed", () => {

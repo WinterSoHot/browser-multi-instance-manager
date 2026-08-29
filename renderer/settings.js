@@ -1,5 +1,7 @@
 // Settings page logic
 
+const { escapeHtml } = window.viewUtils;
+
 const browserNames = {
   chrome: 'Google Chrome',
   firefox: 'Firefox',
@@ -82,14 +84,6 @@ function renderBrowserSettings() {
   });
 }
 
-// Escape HTML to prevent XSS
-function escapeHtml(text) {
-  if (!text) return '';
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
 // Save settings
 document.getElementById('saveSettings').addEventListener('click', async () => {
   const newSettings = {};
@@ -109,7 +103,11 @@ document.getElementById('saveSettings').addEventListener('click', async () => {
     // Let's save empty to indicate using default
   }
 
-  await window.browserAPI.setBrowserSettings(newSettings);
+  const result = await window.browserAPI.setBrowserSettings(newSettings);
+  if (!result.success) {
+    alert(`保存设置失败：${result.error}`);
+    return;
+  }
 
   // Save default view mode
   const viewMode = document.getElementById('defaultViewMode').value;
@@ -126,7 +124,11 @@ document.getElementById('resetSettings').addEventListener('click', async () => {
     return;
   }
 
-  await window.browserAPI.setBrowserSettings({});
+  const result = await window.browserAPI.setBrowserSettings({});
+  if (!result.success) {
+    alert(`重置设置失败：${result.error}`);
+    return;
+  }
   customSettings = {};
   renderBrowserSettings();
   alert('已重置为默认路径');
