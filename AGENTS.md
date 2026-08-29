@@ -28,6 +28,10 @@ Add tests in `test/*.test.js` with Node's built-in `node:test` runner. Name test
 
 Recent history uses concise Chinese subjects, often prefixed by intent (`新增`, `修复`, `优化`, `更新`) or a release label such as `v1.2.1 - ...`. Keep each commit focused and use the same imperative style. Pull requests should summarize behavior changes, identify platform impact, link related issues, include screenshots for UI changes, and record manual verification. Do not commit `dist/`, local settings, user profile data, or credentials.
 
+## Release Process
+
+Before merging a release, run `npm test` and the platform-appropriate packaging command, such as `npm run build:mac`. Merge only after local packaging succeeds and approval is explicit. Push `main`, confirm `package.json` and `package-lock.json` use the release version, then create and push an annotated tag, for example `git tag -a v1.2.2 -m "v1.2.2"` followed by `git push origin v1.2.2`. Tags matching `v*` trigger `.github/workflows/build.yml`, which tests, builds macOS and Windows installers, and creates the GitHub Release. Never move or reuse a published tag; issue a new patch version instead.
+
 ## Security & Configuration
 
 Treat IPC as a trust boundary: validate renderer inputs in main-process handlers and expose only required methods through `contextBridge`. Keep machine-specific browser paths in application settings, not source code. Never add publishing tokens to `package.json` or workflow files; use repository secrets.
