@@ -13,8 +13,6 @@ function normalizeWorkflowSource(source) {
 }
 
 const rawWorkflowSource = fs.readFileSync(path.join(root, '.github/workflows/build.yml'), 'utf8');
-const workflowSource = normalizeWorkflowSource(rawWorkflowSource);
-const workflow = workflowSource.replace(/^[ \t]*#.*(?:\n|$)/gm, '');
 
 function blockBetween(text, start, end) {
   const startIndex = text.indexOf(start);
@@ -146,16 +144,6 @@ function replaceLineWithDecoy(lines, index, mode) {
   return updated.join('\n');
 }
 
-const jobsIndex = workflow.indexOf('jobs:\n');
-assert.notEqual(jobsIndex, -1, 'Missing jobs block');
-const topLevelBlock = workflow.slice(0, jobsIndex);
-const triggerBlock = blockBetween(workflow, 'on:\n', '\njobs:\n');
-const prepareBlock = jobBlock('prepare');
-const buildMacBlock = jobBlock('build-mac');
-const buildWinBlock = jobBlock('build-win');
-const releaseBlock = jobBlock('release');
-const prepareReleaseStateBody = runStepBody('prepare', 'Determine release state');
-const releaseTagStateBody = runStepBody('release', 'Create or verify annotated tag');
 // Any change to these audited shell bodies requires re-auditing the exact extracted
 // script and updating the pinned SHA-256 below.
 const PREPARE_RELEASE_STATE_AUDITED_SHA256 = '7ec1bcf8c55356aaca99c310e7b3702c2be18f63cee2abea97663c37ffaf8720';
@@ -173,6 +161,49 @@ const annotatedTagContractLines = [
   'if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then',
 ];
 
+function parseWorkflowSource(source) {
+  const workflowSource = normalizeWorkflowSource(source);
+  const workflow = workflowSource.replace(/^[ \t]*#.*(?:\n|$)/gm, '');
+  const jobsIndex = workflow.indexOf('jobs:\n');
+  assert.notEqual(jobsIndex, -1, 'Missing jobs block');
+
+  const topLevelBlock = workflow.slice(0, jobsIndex);
+  const triggerBlock = blockBetween(workflow, 'on:\n', '\njobs:\n');
+  const prepareBlock = jobBlockFromText(workflow, 'prepare');
+  const buildMacBlock = jobBlockFromText(workflow, 'build-mac');
+  const buildWinBlock = jobBlockFromText(workflow, 'build-win');
+  const releaseBlock = jobBlockFromText(workflow, 'release');
+  const prepareReleaseStateBody = runStepBodyFromText(workflow, 'prepare', 'Determine release state');
+  const releaseTagStateBody = runStepBodyFromText(workflow, 'release', 'Create or verify annotated tag');
+
+  return {
+    workflowSource,
+    workflow,
+    topLevelBlock,
+    triggerBlock,
+    prepareBlock,
+    buildMacBlock,
+    buildWinBlock,
+    releaseBlock,
+    prepareReleaseStateBody,
+    releaseTagStateBody,
+  };
+}
+
+const parsedWorkflow = parseWorkflowSource(rawWorkflowSource);
+const {
+  workflowSource,
+  workflow,
+  topLevelBlock,
+  triggerBlock,
+  prepareBlock,
+  buildMacBlock,
+  buildWinBlock,
+  releaseBlock,
+  prepareReleaseStateBody,
+  releaseTagStateBody,
+} = parsedWorkflow;
+
 test('release workflow triggers every main push without run-canceling concurrency', () => {
   assert.match(triggerBlock, /pull_request:/);
   assert.match(triggerBlock, /push:\n\s*branches:\n\s*-\s*main/);
@@ -181,15 +212,30 @@ test('release workflow triggers every main push without run-canceling concurrenc
   assert.doesNotMatch(workflow, /^\s*concurrency:/m);
 });
 
-test('workflow parsing canonicalizes CRLF copies before block extraction', () => {
-  const crlfWorkflow = rawWorkflowSource.replace(/\n/g, '\r\n');
-  const normalizedWorkflow = normalizeWorkflowSource(crlfWorkflow);
+test('workflow parsing canonicalizes CRLF copies through the unified parser entry point', () => {
+  const crlfWorkflow = rawWorkflowSource.replace(/\r?\n/g, '\r\n');
+  const parsed = parseWorkflowSource(crlfWorkflow);
 
-  assert.equal(normalizedWorkflow.includes('\r'), false);
-  assert.match(normalizedWorkflow, /\non:\n/);
-  assert.doesNotThrow(() => blockBetween(normalizedWorkflow, 'on:\n', '\njobs:\n'));
-  assert.doesNotThrow(() => jobBlockFromText(normalizedWorkflow, 'prepare'));
-  assert.doesNotThrow(() => runStepBodyFromText(normalizedWorkflow, 'prepare', 'Determine release state'));
+  assert.equal(parsed.workflowSource.includes('\r'), false);
+  assert.match(parsed.triggerBlock, /workflow_dispatch:/);
+  assert.match(parsed.prepareBlock, /permissions:\n\s*contents:\s*read/);
+  assert.equal(parsed.prepareReleaseStateBody, prepareReleaseStateBody);
+  assert.equal(parsed.releaseTagStateBody, releaseTagStateBody);
+  assert.equal(sha256(parsed.prepareReleaseStateBody), PREPARE_RELEASE_STATE_AUDITED_SHA256);
+  assert.equal(sha256(parsed.releaseTagStateBody), RELEASE_TAG_STATE_AUDITED_SHA256);
+});
+
+test('workflow parsing canonicalizes lone-CR copies through the unified parser entry point', () => {
+  const loneCrWorkflow = rawWorkflowSource.replace(/\r?\n/g, '\r');
+  const parsed = parseWorkflowSource(loneCrWorkflow);
+
+  assert.equal(parsed.workflowSource.includes('\r'), false);
+  assert.match(parsed.triggerBlock, /workflow_dispatch:/);
+  assert.match(parsed.releaseBlock, /needs:\s*\[prepare, build-mac, build-win\]/);
+  assert.equal(parsed.prepareReleaseStateBody, prepareReleaseStateBody);
+  assert.equal(parsed.releaseTagStateBody, releaseTagStateBody);
+  assert.equal(sha256(parsed.prepareReleaseStateBody), PREPARE_RELEASE_STATE_AUDITED_SHA256);
+  assert.equal(sha256(parsed.releaseTagStateBody), RELEASE_TAG_STATE_AUDITED_SHA256);
 });
 
 test('prepare validates matching manifest versions and derives the tag dynamically', () => {
