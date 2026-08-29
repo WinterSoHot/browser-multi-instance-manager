@@ -14,7 +14,7 @@ The release job depends on both platform jobs. It downloads their artifacts, rec
 
 ## Reliability and Security
 
-Serialize `main` workflow runs so two pushes cannot publish the same version concurrently. Default permissions remain read-only; only the final release job receives `contents: write`. Upgrade official JavaScript actions to their current Node 24-compatible majors: `actions/checkout@v5`, `actions/setup-node@v5`, `actions/upload-artifact@v6`, and `actions/download-artifact@v6`. The application itself continues testing on Node.js 20.
+Do not apply workflow-level concurrency, because every `main` push must reach its platform tests. Concurrent release candidates fail closed by rechecking the remote release and tag state before publication. Default permissions remain read-only; only the final release job receives `contents: write`. Upgrade official JavaScript actions to their current Node 24-compatible majors: `actions/checkout@v5`, `actions/setup-node@v5`, `actions/upload-artifact@v6`, and `actions/download-artifact@v6`. The application itself continues testing on Node.js 20.
 
 Failures before the release job leave no new tag. If release creation fails after the annotated tag is pushed, rerunning the same commit can reuse that exact tag and finish the Release without rewriting history.
 

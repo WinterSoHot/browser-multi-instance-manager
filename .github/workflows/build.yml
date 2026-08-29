@@ -7,10 +7,6 @@ on:
       - main
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   prepare:
     runs-on: ubuntu-latest
@@ -87,6 +83,11 @@ jobs:
           TAG_REF="refs/tags/$TAG"
           if git ls-remote --exit-code --tags origin "$TAG_REF" >/dev/null 2>&1; then
             git fetch --no-tags origin "$TAG_REF:$TAG_REF"
+            TAG_TYPE="$(git cat-file -t "$TAG")"
+            if [ "$TAG_TYPE" != "tag" ]; then
+              echo "Unpublished tag $TAG is not annotated." >&2
+              exit 1
+            fi
             TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
             if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
               echo "Unpublished tag $TAG points to $TAG_COMMIT, not $GITHUB_SHA." >&2
@@ -243,6 +244,11 @@ jobs:
           if git ls-remote --exit-code --tags origin "$TAG_REF" >/dev/null 2>&1; then
             git fetch --no-tags origin "$TAG_REF:$TAG_REF"
             git show-ref --tags --verify --quiet "$TAG_REF"
+            TAG_TYPE="$(git cat-file -t "$TAG")"
+            if [ "$TAG_TYPE" != "tag" ]; then
+              echo "Existing tag $TAG is not annotated." >&2
+              exit 1
+            fi
             TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
             if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
               echo "Existing tag $TAG points to $TAG_COMMIT, not $GITHUB_SHA." >&2

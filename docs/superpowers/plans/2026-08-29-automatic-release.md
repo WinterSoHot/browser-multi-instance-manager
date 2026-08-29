@@ -4,7 +4,7 @@
 
 **Goal:** Replace tag-first releases with automatic, package-version-driven cross-platform CI that creates an annotated tag and GitHub Release only after both installers build successfully.
 
-**Architecture:** One GitHub Actions workflow handles pull-request tests and serialized `main` pushes. A prepare job derives release state from `package.json`; macOS and Windows jobs always test and conditionally package; a least-privilege release job publishes verified artifacts and supports recovery from a same-commit tag without moving tags.
+**Architecture:** One GitHub Actions workflow handles pull-request tests and every `main` push. A prepare job derives release state from `package.json`; macOS and Windows jobs always test and conditionally package; a least-privilege release job publishes verified artifacts and supports recovery from a same-commit annotated tag without moving tags.
 
 **Tech Stack:** GitHub Actions YAML, Node.js 20, npm, Electron Builder, GitHub CLI, Node built-in `node:test`.
 
@@ -31,7 +31,7 @@
 - Consumes: `.github/workflows/build.yml` as UTF-8 text and both package manifests as JSON.
 - Produces: a regression contract covering triggers, action majors, version consistency, conditional builds, annotated tagging, and release creation.
 
-- [ ] **Step 1: Write the failing workflow contract test**
+- [x] **Step 1: Write the failing workflow contract test**
 
 ```js
 const test = require('node:test');
@@ -67,13 +67,13 @@ test('package and lockfile release versions match', () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify the old workflow fails**
+- [x] **Step 2: Run the focused test and verify the old workflow fails**
 
 Run: `node --test test/workflow.test.js`
 
 Expected: FAIL because the current workflow lacks `pull_request`, uses the old action majors, and is tag-triggered.
 
-- [ ] **Step 3: Commit the failing regression test**
+- [x] **Step 3: Commit the failing regression test**
 
 ```bash
 git add test/workflow.test.js
@@ -90,19 +90,19 @@ git commit -m "测试：约束自动发布工作流"
 - Consumes: `package.json.version`, `package-lock.json.version`, `github.event_name`, `github.sha`, repository tags, and GitHub Releases.
 - Produces: prepare outputs `tag`, `should_release`, and `create_tag`; artifacts named `dmg` and `exe`; annotated tag and GitHub Release.
 
-- [ ] **Step 1: Replace the workflow triggers and permissions**
+- [x] **Step 1: Replace the workflow triggers and permissions**
 
-Configure `pull_request` and `push.branches: [main]`, plus `workflow_dispatch` for retrying the selected `main` commit without inputs. Add workflow-level `concurrency` with `cancel-in-progress: false` and default `contents: read`.
+Configure `pull_request` and `push.branches: [main]`, plus `workflow_dispatch` for retrying the selected `main` commit without inputs. Do not add workflow-level concurrency, so every push reaches its tests; rely on fail-closed remote-state rechecks before publication.
 
-- [ ] **Step 2: Add a prepare job with strict version-state checks**
+- [x] **Step 2: Add a prepare job with strict version-state checks**
 
 Checkout with full history, read both manifest versions in a Node step, reject non-matching or non-SemVer values, and write `tag=v<version>` to `$GITHUB_OUTPUT`. For pull requests, emit `should_release=false`. For `main`, use `git ls-remote` and `gh release view` to distinguish: published release (skip), absent tag (build and create), same-SHA tag without release (build and resume), or conflicting unpublished tag (fail).
 
-- [ ] **Step 3: Convert macOS and Windows jobs to test-first conditional builders**
+- [x] **Step 3: Convert macOS and Windows jobs to test-first conditional builders**
 
 Make both jobs depend on `prepare`, use checkout/setup-node v5, run `npm ci` and `npm test` unconditionally, then run `npm run build:mac` or `npm run build:win` and upload with v6 only when `should_release == 'true'`.
 
-- [ ] **Step 4: Add the least-privilege release job**
+- [x] **Step 4: Add the least-privilege release job**
 
 Make the job depend on `[prepare, build-mac, build-win]`, condition it on `should_release == 'true'`, grant only it `contents: write`, download artifacts with v6, recheck the remote tag, create and push `git tag -a <tag> <github.sha> -m <tag>` only when absent, verify an existing tag resolves to the same commit, then run:
 
@@ -114,19 +114,19 @@ gh release create "$TAG" artifacts/*.dmg artifacts/*.exe \
   --generate-notes
 ```
 
-- [ ] **Step 5: Run the focused test**
+- [x] **Step 5: Run the focused test**
 
 Run: `node --test test/workflow.test.js`
 
-Expected: PASS with three tests.
+Actual: PASS with nine tests.
 
-- [ ] **Step 6: Validate YAML parsing**
+- [x] **Step 6: Validate YAML parsing**
 
 Run: `ruby -e "require 'yaml'; YAML.parse_file('.github/workflows/build.yml'); puts 'YAML OK'"`
 
 Expected: `YAML OK`.
 
-- [ ] **Step 7: Commit the workflow implementation**
+- [x] **Step 7: Commit the workflow implementation**
 
 ```bash
 git add .github/workflows/build.yml
@@ -154,6 +154,8 @@ State that contributors update both manifest versions, run `npm test` and the pl
 Run: `npm test`
 
 Expected: all tests pass with zero failures.
+
+Actual final suite: 47 passed, 0 failed.
 
 - [x] **Step 3: Build the local macOS packages**
 
