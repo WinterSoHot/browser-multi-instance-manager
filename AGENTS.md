@@ -30,7 +30,7 @@ Recent history uses concise Chinese subjects, often prefixed by intent (`新增`
 
 ## Release Process
 
-Before merging a release, run `npm test` and the platform-appropriate packaging command, such as `npm run build:mac`. Merge only after local packaging succeeds and approval is explicit. Push `main`, confirm `package.json` and `package-lock.json` use the release version, then create and push an annotated tag, for example `git tag -a v1.2.2 -m "v1.2.2"` followed by `git push origin v1.2.2`. Tags matching `v*` trigger `.github/workflows/build.yml`, which tests, builds macOS and Windows installers, and creates the GitHub Release. Never move or reuse a published tag; issue a new patch version instead.
+Before merging a release, update both `package.json` and `package-lock.json` to the same version, run `npm test`, and run the platform-appropriate packaging command, such as `npm run build:mac`. Push `main` only after local packaging succeeds and approval is explicit. GitHub Actions then runs macOS and Windows tests for pull requests and `main` pushes; if that version already has a published release, the workflow stops after testing, otherwise it builds both installers, creates or reuses the same-commit annotated tag, and publishes the GitHub Release. Do not create a release tag manually in advance, and never move, reuse, or overwrite an existing release tag; publish a new patch version instead.
 
 ## Security & Configuration
 
