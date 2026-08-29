@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -116,76 +117,16 @@ function assertHasExactLine(text, line) {
   assert.match(text, new RegExp(`^\\s*${escapeRegExp(line)}\\s*$`, 'm'));
 }
 
-function containsHereDocOperator(text) {
-  return /^\s*(?!#).*<<-?\s*\S+/m.test(text);
-}
-
-function containsNewlineSpanningQuotedString(text) {
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
-  let escaped = false;
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-
-    if (inSingleQuote) {
-      if (char === '\n') {
-        return true;
-      }
-      if (char === '\'') {
-        inSingleQuote = false;
-      }
-      continue;
-    }
-
-    if (inDoubleQuote) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (char === '\n') {
-        return true;
-      }
-      if (char === '\\') {
-        escaped = true;
-        continue;
-      }
-      if (char === '"') {
-        inDoubleQuote = false;
-      }
-      continue;
-    }
-
-    if (char === '#') {
-      while (index < text.length && text[index] !== '\n') {
-        index += 1;
-      }
-      continue;
-    }
-
-    if (char === '\'') {
-      inSingleQuote = true;
-      continue;
-    }
-
-    if (char === '"') {
-      inDoubleQuote = true;
-    }
-  }
-
-  return false;
-}
-
-function hasDisallowedShellBodySyntax(text) {
-  return containsHereDocOperator(text) || containsNewlineSpanningQuotedString(text);
+function sha256(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
 }
 
 function matchesExactLines(text, lines) {
-  if (hasDisallowedShellBodySyntax(text)) {
-    return false;
-  }
-
   return lines.every((line) => hasExactLine(text, line));
+}
+
+function matchesAuditedScript(text, lines, expectedSha256) {
+  return matchesExactLines(text, lines) && sha256(text) === expectedSha256;
 }
 
 function replaceLineWithDecoy(lines, index, mode) {
@@ -209,6 +150,10 @@ const buildWinBlock = jobBlock('build-win');
 const releaseBlock = jobBlock('release');
 const prepareReleaseStateBody = runStepBody('prepare', 'Determine release state');
 const releaseTagStateBody = runStepBody('release', 'Create or verify annotated tag');
+// Any change to these audited shell bodies requires re-auditing the exact extracted
+// script and updating the pinned SHA-256 below.
+const PREPARE_RELEASE_STATE_AUDITED_SHA256 = '7ec1bcf8c55356aaca99c310e7b3702c2be18f63cee2abea97663c37ffaf8720';
+const RELEASE_TAG_STATE_AUDITED_SHA256 = 'ac728920a3b2f2e90e2ead0f89e44fc84b9e3acf13edba9a7f15998bde5e41b8';
 const remoteStateContractLines = [
   'RELEASE_STATUS=$?',
   'if [ "$RELEASE_STATUS" -ne 1 ] || ! grep -q "HTTP 404" "$RELEASE_ERROR"; then',
@@ -245,11 +190,17 @@ test('prepare refuses non-main dispatches and fails closed on remote lookup erro
   assertHasExactLine(prepareReleaseStateBody, 'if [ "$GITHUB_REF" != "refs/heads/main" ]; then');
   assertHasExactLine(prepareReleaseStateBody, 'echo "workflow_dispatch releases must target refs/heads/main" >&2');
   assert.equal(matchesExactLines(prepareReleaseStateBody, remoteStateContractLines), true);
+  assert.equal(sha256(prepareReleaseStateBody), PREPARE_RELEASE_STATE_AUDITED_SHA256);
   assertHasExactLine(prepareReleaseStateBody, 'echo "Unable to determine whether remote tag $TAG exists." >&2');
 });
 
 test('prepare accepts only a same-commit annotated existing tag', () => {
   assert.equal(matchesExactLines(prepareReleaseStateBody, annotatedTagContractLines), true);
+  assert.equal(matchesAuditedScript(
+    prepareReleaseStateBody,
+    [...remoteStateContractLines, ...annotatedTagContractLines],
+    PREPARE_RELEASE_STATE_AUDITED_SHA256,
+  ), true);
 });
 
 test('workflow step extraction excludes following unnamed step decoys', () => {
@@ -274,20 +225,36 @@ test('workflow step extraction excludes following unnamed step decoys', () => {
   assert.equal(extracted.trim(), 'set -euo pipefail');
 });
 
+test('runStepBodyFromStepBlock stops at same-step dedented YAML fields', () => {
+  const stepBlockText = [
+    '        shell: bash',
+    '        run: |',
+    '          set -euo pipefail',
+    '          RELEASE_STATUS=$?',
+    '        env:',
+    '          FAKE_COMMAND: if [ "$TAG_STATUS" -ne 2 ]; then',
+  ].join('\n');
+
+  const extracted = runStepBodyFromStepBlock(stepBlockText, 'prepare', 'Determine release state');
+  assert.equal(extracted, ['set -euo pipefail', 'RELEASE_STATUS=$?'].join('\n'));
+  assert.doesNotMatch(extracted, /TAG_STATUS/);
+});
+
 test('workflow contract matchers reject line-level inline-comment and echo-only fakes', async (t) => {
   const lineSets = [
-    ['remote-state', remoteStateContractLines],
-    ['annotated-tag', annotatedTagContractLines],
+    ['remote-state', remoteStateContractLines, PREPARE_RELEASE_STATE_AUDITED_SHA256],
+    ['annotated-tag', annotatedTagContractLines, RELEASE_TAG_STATE_AUDITED_SHA256],
   ];
   const modes = ['inline-comment', 'echo-only'];
 
-  for (const [label, lines] of lineSets) {
+  for (const [label, lines, expectedSha256] of lineSets) {
     for (let index = 0; index < lines.length; index += 1) {
       for (const mode of modes) {
         await t.test(`${label} rejects ${mode} decoy for ${lines[index]}`, () => {
           const fakeBody = replaceLineWithDecoy(lines, index, mode);
+          assert.notEqual(sha256(fakeBody), expectedSha256, `${label} ${mode} decoy should change the audited script for ${lines[index]}`);
           assert.equal(
-            matchesExactLines(fakeBody, lines),
+            matchesAuditedScript(fakeBody, lines, expectedSha256),
             false,
             `${label} should reject ${mode} decoy for ${lines[index]}`,
           );
@@ -299,8 +266,8 @@ test('workflow contract matchers reject line-level inline-comment and echo-only 
 
 test('workflow contract matchers reject heredoc and multiline quoted decoys', async (t) => {
   const lineSets = [
-    ['remote-state', remoteStateContractLines],
-    ['annotated-tag', annotatedTagContractLines],
+    ['remote-state', remoteStateContractLines, PREPARE_RELEASE_STATE_AUDITED_SHA256],
+    ['annotated-tag', annotatedTagContractLines, RELEASE_TAG_STATE_AUDITED_SHA256],
   ];
   const decoyBodies = {
     heredoc: (lines) => [
@@ -315,16 +282,42 @@ test('workflow contract matchers reject heredoc and multiline quoted decoys', as
     ].join('\n'),
   };
 
-  for (const [label, lines] of lineSets) {
+  for (const [label, lines, expectedSha256] of lineSets) {
     for (const [mode, buildBody] of Object.entries(decoyBodies)) {
       await t.test(`${label} rejects ${mode} decoy`, () => {
+        const fakeBody = buildBody(lines);
+        assert.notEqual(sha256(fakeBody), expectedSha256, `${label} ${mode} decoy should change the audited script`);
         assert.equal(
-          matchesExactLines(buildBody(lines), lines),
+          matchesAuditedScript(fakeBody, lines, expectedSha256),
           false,
           `${label} should reject ${mode} decoys`,
         );
       });
     }
+  }
+});
+
+test('workflow contract matchers reject foo#bar multiline-quote bypass decoys', async (t) => {
+  const lineSets = [
+    ['remote-state', remoteStateContractLines, PREPARE_RELEASE_STATE_AUDITED_SHA256],
+    ['annotated-tag', annotatedTagContractLines, RELEASE_TAG_STATE_AUDITED_SHA256],
+  ];
+
+  for (const [label, lines, expectedSha256] of lineSets) {
+    await t.test(`${label} rejects foo#bar multiline-quote bypass`, () => {
+      const fakeBody = [
+        'printf foo#bar "',
+        ...lines,
+        '"',
+      ].join('\n');
+
+      assert.notEqual(sha256(fakeBody), expectedSha256, `${label} foo#bar bypass should change the audited script`);
+      assert.equal(
+        matchesAuditedScript(fakeBody, lines, expectedSha256),
+        false,
+        `${label} should reject foo#bar multiline-quote bypass`,
+      );
+    });
   }
 });
 
@@ -361,6 +354,11 @@ test('release rechecks remote state and accepts only an annotated existing tag',
   assert.equal(matchesExactLines(releaseTagStateBody, remoteStateContractLines), true);
   assertHasExactLine(releaseTagStateBody, 'echo "Unable to determine whether remote tag $TAG exists." >&2');
   assert.equal(matchesExactLines(releaseTagStateBody, annotatedTagContractLines), true);
+  assert.equal(matchesAuditedScript(
+    releaseTagStateBody,
+    [...remoteStateContractLines, ...annotatedTagContractLines],
+    RELEASE_TAG_STATE_AUDITED_SHA256,
+  ), true);
   assert.doesNotMatch(releaseTagStateBody, /^git (?:tag|push).*(?:--force|\s-f\b).*$/m);
 });
 

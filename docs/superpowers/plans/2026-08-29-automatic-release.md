@@ -118,13 +118,13 @@ gh release create "$TAG" artifacts/*.dmg artifacts/*.exe \
 
 Run: `node --test test/workflow.test.js`
 
-Actual: PASS with nine tests.
+Actual final focused file: 36 passed, 0 failed.
 
 - [x] **Step 6: Validate YAML parsing**
 
 Run: `ruby -e "require 'yaml'; YAML.parse_file('.github/workflows/build.yml'); puts 'YAML OK'"`
 
-Expected: `YAML OK`.
+Actual: `YAML OK`.
 
 - [x] **Step 7: Commit the workflow implementation**
 
@@ -155,7 +155,7 @@ Run: `npm test`
 
 Expected: all tests pass with zero failures.
 
-Actual final suite: 47 passed, 0 failed.
+Actual final suite: 74 passed, 0 failed.
 
 - [x] **Step 3: Build the local macOS packages**
 
