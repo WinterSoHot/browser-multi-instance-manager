@@ -5,10 +5,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
-const workflowSource = fs.readFileSync(path.join(root, '.github/workflows/build.yml'), 'utf8');
-const workflow = workflowSource.replace(/^[ \t]*#.*(?:\r?\n|$)/gm, '');
 const packageJson = require('../package.json');
 const packageLock = require('../package-lock.json');
+
+function normalizeWorkflowSource(source) {
+  return source.replace(/\r\n?/g, '\n');
+}
+
+const rawWorkflowSource = fs.readFileSync(path.join(root, '.github/workflows/build.yml'), 'utf8');
+const workflowSource = normalizeWorkflowSource(rawWorkflowSource);
+const workflow = workflowSource.replace(/^[ \t]*#.*(?:\n|$)/gm, '');
 
 function blockBetween(text, start, end) {
   const startIndex = text.indexOf(start);
@@ -173,6 +179,17 @@ test('release workflow triggers every main push without run-canceling concurrenc
   assert.match(triggerBlock, /workflow_dispatch:/);
   assert.doesNotMatch(triggerBlock, /\btags:\s*/);
   assert.doesNotMatch(workflow, /^\s*concurrency:/m);
+});
+
+test('workflow parsing canonicalizes CRLF copies before block extraction', () => {
+  const crlfWorkflow = rawWorkflowSource.replace(/\n/g, '\r\n');
+  const normalizedWorkflow = normalizeWorkflowSource(crlfWorkflow);
+
+  assert.equal(normalizedWorkflow.includes('\r'), false);
+  assert.match(normalizedWorkflow, /\non:\n/);
+  assert.doesNotThrow(() => blockBetween(normalizedWorkflow, 'on:\n', '\njobs:\n'));
+  assert.doesNotThrow(() => jobBlockFromText(normalizedWorkflow, 'prepare'));
+  assert.doesNotThrow(() => runStepBodyFromText(normalizedWorkflow, 'prepare', 'Determine release state'));
 });
 
 test('prepare validates matching manifest versions and derives the tag dynamically', () => {
