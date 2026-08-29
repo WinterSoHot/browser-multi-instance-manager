@@ -29,10 +29,11 @@ const buildMacBlock = blockBetween(workflow, '  build-mac:\n', '\n  build-win:\n
 const buildWinBlock = blockBetween(workflow, '  build-win:\n', '\n  release:\n');
 const releaseBlock = workflow.slice(workflow.indexOf('  release:\n'));
 const versionTag = `v${packageJson.version}`;
-const versionTagPattern = new RegExp(`git tag -a\\s+${escapeRegExp(versionTag)}\\b`);
-const tagPreflightPattern = new RegExp(
-  `git show-ref --tags --verify --quiet\\s+refs/tags/${escapeRegExp(versionTag)}\\b`
-);
+const versionLiteralPattern = new RegExp(escapeRegExp(versionTag));
+const packageJsonVersionReadPattern = /package\.json/;
+const derivedVersionPattern = /v['"`]?\s*\+\s*.*version|version\s*\+\s*['"`]v['"`]|['"`]v['"`]\s*\+\s*.*version/;
+const exportedTagPattern = /(outputs|env):[\s\S]*(tag|tag_name|release_tag|version_tag)/;
+const dynamicTagReferencePattern = /(\$\{\{[^}]*steps\.[^}]*\.(outputs\.[^}\s]+|output\.[^}\s]+)[^}]*\}\}|\$[A-Z_]*(TAG|TAG_NAME|RELEASE_TAG|VERSION_TAG)\b)/;
 
 test('release workflow validates main and pull requests before publishing', () => {
   assert.match(triggerBlock, /pull_request:/);
@@ -64,14 +65,19 @@ test('release workflow keeps permissions scoped to each job', () => {
   assert.doesNotMatch(releaseBlock, /permissions:\n[\s\S]*actions:\s*write/);
 });
 
-test('release workflow publishes only an annotated version tag after preflight checks', () => {
-  assert.match(releaseBlock, versionTagPattern);
-  assert.match(releaseBlock, tagPreflightPattern);
+test('release workflow derives and uses a dynamic version tag', () => {
+  assert.match(releaseBlock, packageJsonVersionReadPattern);
+  assert.match(releaseBlock, derivedVersionPattern);
+  assert.match(releaseBlock, exportedTagPattern);
+  assert.match(releaseBlock, dynamicTagReferencePattern);
   assert.match(releaseBlock, /git tag -a/);
   assert.match(releaseBlock, /gh release create/);
+  assert.match(releaseBlock, /git show-ref --tags --verify --quiet/);
+  assert.match(releaseBlock, /refs\/tags/);
   assert.doesNotMatch(releaseBlock, /git tag\b[^\n]*\s--force\b/);
   assert.doesNotMatch(releaseBlock, /git tag\b[^\n]*\s-f\b/);
   assert.doesNotMatch(releaseBlock, /git push\b[^\n]*\s--force\b/);
+  assert.doesNotMatch(releaseBlock, versionLiteralPattern);
 });
 
 test('package and lockfile release versions match', () => {
