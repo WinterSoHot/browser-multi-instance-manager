@@ -24,7 +24,7 @@ function blockBetween(text, start, end) {
 }
 
 const topLevelBlock = workflow.slice(0, workflow.indexOf('jobs:\n'));
-const triggerBlock = blockBetween(workflow, 'on:\n', '\npermissions:\n');
+const triggerBlock = blockBetween(workflow, 'on:\n', '\njobs:\n');
 const buildMacBlock = blockBetween(workflow, '  build-mac:\n', '\n  build-win:\n');
 const buildWinBlock = blockBetween(workflow, '  build-win:\n', '\n  release:\n');
 const releaseBlock = workflow.slice(workflow.indexOf('  release:\n'));
