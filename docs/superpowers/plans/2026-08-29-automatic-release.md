@@ -155,7 +155,7 @@ Run: `npm test`
 
 Expected: all tests pass with zero failures.
 
-- [ ] **Step 3: Build the local macOS packages**
+- [x] **Step 3: Build the local macOS packages**
 
 Run: `npm run build:mac`
 
