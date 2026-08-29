@@ -5,8 +5,13 @@ const Store = require("electron-store");
 const { normalizeBrowserExecutablePath } = require("./lib/browser-paths");
 const { BrowserProcessManager } = require("./lib/browser-process-manager");
 const {
+  inspectBrowserProcess,
+} = require("./lib/process-inspector");
+const { createWindowAfterInitialization } = require("./lib/window-lifecycle");
+const {
   areProfileNamesEqual,
   createProfileRecord,
+  filterRestorableProcessRecords,
   isStoredProfilePathSafe,
   resolveProfilePath,
   validateBrowserSettings,
@@ -19,11 +24,17 @@ const store = new Store({
   defaults: {
     profiles: [],
     browserSettings: {},
+    runningBrowserProcesses: [],
   },
 });
 
 let mainWindow;
-const browserProcessManager = new BrowserProcessManager();
+const browserProcessManager = new BrowserProcessManager({
+  verifyProcess: inspectBrowserProcess,
+  onStateChange(records) {
+    store.set("runningBrowserProcesses", records);
+  },
+});
 
 // Get current platform
 function getPlatform() {
@@ -179,12 +190,13 @@ ipcMain.handle("add-profile", (event, payload = {}) => {
   return { success: true, profile: newProfile };
 });
 
-ipcMain.handle("delete-profile", (event, profileId) => {
+ipcMain.handle("delete-profile", async (event, profileId) => {
   const profiles = store.get("profiles", []);
   if (!profiles.some((profile) => profile.id === profileId)) {
     return { success: false, error: "Profile not found" };
   }
-  if (browserProcessManager.isRunning(profileId)) {
+  const { running } = await browserProcessManager.getStatus(profileId, { force: true });
+  if (running) {
     return { success: false, error: "Close the browser before removing its profile" };
   }
 
@@ -229,14 +241,15 @@ ipcMain.handle("get-browser-status", (event, profileId) => {
   return browserProcessManager.getStatus(profileId);
 });
 
-ipcMain.handle("rename-profile", (event, payload = {}) => {
+ipcMain.handle("rename-profile", async (event, payload = {}) => {
   const { profileId, newName } = payload;
   const profiles = store.get("profiles", []);
   const profileIndex = profiles.findIndex((p) => p.id === profileId);
   if (profileIndex === -1) {
     return { success: false, error: "Profile not found" };
   }
-  if (browserProcessManager.isRunning(profileId)) {
+  const { running } = await browserProcessManager.getStatus(profileId, { force: true });
+  if (running) {
     return { success: false, error: "Close the browser before renaming its profile" };
   }
 
@@ -342,14 +355,28 @@ ipcMain.handle("browse-folder", async (event, defaultPath) => {
   return { success: true, path: result.filePaths[0] };
 });
 
-app.whenReady().then(() => {
-  createWindow();
+const initializationPromise = app.whenReady().then(async () => {
+  const profilesDir = getProfilesDir();
+  const persistedProcesses = filterRestorableProcessRecords(
+    profilesDir,
+    store.get("profiles", []),
+    store.get("runningBrowserProcesses", []),
+  );
+  await browserProcessManager.restore(persistedProcesses);
 });
 
+function ensureMainWindow() {
+  return createWindowAfterInitialization({
+    initializationPromise,
+    getWindows: () => BrowserWindow.getAllWindows(),
+    createWindow,
+  });
+}
+
+void ensureMainWindow();
+
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
+  void ensureMainWindow();
 });
 
 app.on("window-all-closed", () => {

@@ -37,3 +37,26 @@ test('hydrates running profile IDs when a renderer page loads', async () => {
     ['work', 'personal'],
   );
 });
+
+test('prevents overlapping executions of an asynchronous polling task', async () => {
+  let releaseTask;
+  let executionCount = 0;
+  const poll = viewUtils.createNonOverlappingTask?.(async () => {
+    executionCount += 1;
+    await new Promise((resolve) => {
+      releaseTask = resolve;
+    });
+  });
+
+  const firstRun = poll();
+  assert.equal(await poll(), false);
+  assert.equal(executionCount, 1);
+
+  releaseTask();
+  assert.equal(await firstRun, true);
+
+  const thirdRun = poll();
+  assert.equal(executionCount, 2);
+  releaseTask();
+  await thirdRun;
+});

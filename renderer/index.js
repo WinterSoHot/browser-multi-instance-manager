@@ -1,6 +1,11 @@
 // Render process logic - Main page
 
-const { escapeHtml, getRunningProfileIds, summarizeResults } = window.viewUtils;
+const {
+  createNonOverlappingTask,
+  escapeHtml,
+  getRunningProfileIds,
+  summarizeResults,
+} = window.viewUtils;
 
 let profiles = [];
 let currentRenameId = null;
@@ -68,14 +73,18 @@ function startStatusPolling() {
     clearInterval(statusCheckInterval);
   }
 
-  statusCheckInterval = setInterval(async () => {
+  const pollStatus = createNonOverlappingTask(async () => {
     if (runningBrowsers.size === 0) return;
 
     const toRemove = [];
     for (const profileId of runningBrowsers) {
-      const status = await window.browserAPI.getBrowserStatus(profileId);
-      if (!status.running) {
-        toRemove.push(profileId);
+      try {
+        const status = await window.browserAPI.getBrowserStatus(profileId);
+        if (!status.running) {
+          toRemove.push(profileId);
+        }
+      } catch {
+        // Keep the last known state and retry during the next polling pass.
       }
     }
 
@@ -83,7 +92,9 @@ function startStatusPolling() {
       toRemove.forEach(id => runningBrowsers.delete(id));
       renderProfiles();
     }
-  }, 2000);
+  });
+
+  statusCheckInterval = setInterval(pollStatus, 2000);
 }
 
 // Render profiles list

@@ -40,5 +40,24 @@
     return runningProfileIds.filter(Boolean);
   }
 
-  return { escapeHtml, summarizeResults, getRunningProfileIds };
+  function createNonOverlappingTask(task) {
+    let running = false;
+    return async function runTask() {
+      if (running) return false;
+      running = true;
+      try {
+        await task();
+        return true;
+      } finally {
+        running = false;
+      }
+    };
+  }
+
+  return {
+    escapeHtml,
+    summarizeResults,
+    getRunningProfileIds,
+    createNonOverlappingTask,
+  };
 }));

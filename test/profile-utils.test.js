@@ -103,6 +103,37 @@ test('detects stored profile paths that do not match their controlled directory'
   );
 });
 
+test('keeps process records only when they match a current safe profile', () => {
+  const baseDir = path.join(path.sep, 'app-data', 'profiles');
+  const profile = {
+    id: 'profile-1',
+    browserType: 'chrome',
+    name: 'work',
+    path: path.join(baseDir, 'chrome', 'work'),
+  };
+  const validRecord = {
+    profileId: 'profile-1',
+    browserType: 'chrome',
+    profilePath: profile.path,
+    executablePath: path.join(path.sep, 'Applications', 'Chrome'),
+    pid: 123,
+  };
+
+  assert.deepEqual(
+    profileUtils.filterRestorableProcessRecords?.(
+      baseDir,
+      [profile],
+      [
+        validRecord,
+        { ...validRecord, profileId: 'deleted-profile' },
+        { ...validRecord, browserType: 'edge' },
+        { ...validRecord, profilePath: path.join(path.sep, 'tmp', 'work') },
+      ],
+    ),
+    [validRecord],
+  );
+});
+
 test('accepts only supported absolute browser executable settings', () => {
   assert.deepEqual(
     profileUtils.validateBrowserSettings?.({
