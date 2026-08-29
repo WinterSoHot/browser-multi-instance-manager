@@ -1,26 +1,107 @@
 name: Build and Release
 
 on:
+  pull_request:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
   workflow_dispatch:
 
-permissions:
-  contents: write
-  actions: write
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      should_release: ${{ steps.release-state.outputs.should_release }}
+      create_tag: ${{ steps.release-state.outputs.create_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Validate release version
+        id: version
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const packageLock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const version = packageJson.version;
+          const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+          if (version !== packageLock.version || version !== packageLock.packages[''].version) {
+            throw new Error('package.json and package-lock.json versions must match');
+          }
+          if (!semver.test(version)) {
+            throw new Error(`Version is not valid SemVer: ${version}`);
+          }
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `tag=v${version}\n`);
+          NODE
+
+      - name: Determine release state
+        id: release-state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "create_tag=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "workflow_dispatch releases must target refs/heads/main" >&2
+            exit 1
+          fi
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping publication."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "create_tag=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          TAG_REF="refs/tags/$TAG"
+          if git ls-remote --exit-code --tags origin "$TAG_REF" >/dev/null 2>&1; then
+            git fetch --no-tags origin "$TAG_REF:$TAG_REF"
+            TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
+            if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
+              echo "Unpublished tag $TAG points to $TAG_COMMIT, not $GITHUB_SHA." >&2
+              exit 1
+            fi
+            echo "Tag $TAG already points at this commit; resuming release."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "create_tag=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+          echo "create_tag=true" >> "$GITHUB_OUTPUT"
+
   build-mac:
+    needs: prepare
     runs-on: macos-latest
     permissions:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
@@ -32,27 +113,30 @@ jobs:
         run: npm test
 
       - name: Build macOS
+        if: needs.prepare.outputs.should_release == 'true'
         run: npm run build:mac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload DMG
-        uses: actions/upload-artifact@v4
+        if: needs.prepare.outputs.should_release == 'true'
+        uses: actions/upload-artifact@v6
         with:
           name: dmg
           path: dist/*.dmg
           retention-days: 5
 
   build-win:
+    needs: prepare
     runs-on: windows-latest
     permissions:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
@@ -64,36 +148,72 @@ jobs:
         run: npm test
 
       - name: Build Windows
+        if: needs.prepare.outputs.should_release == 'true'
         run: npm run build:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload EXE
-        uses: actions/upload-artifact@v4
+        if: needs.prepare.outputs.should_release == 'true'
+        uses: actions/upload-artifact@v6
         with:
           name: exe
           path: dist/*.exe
           retention-days: 5
 
   release:
-    needs: [build-mac, build-win]
+    needs: [prepare, build-mac, build-win]
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: artifacts
           merge-multiple: true
 
-      - name: Create Release
-        uses: ncipollo/release-action@v1
-        with:
-          artifacts: "artifacts/*.dmg,artifacts/*.exe"
-          draft: false
-          prerelease: false
-          generateReleaseNotes: true
+      - name: Derive release tag
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const tag = 'v' + packageJson.version;
+          fs.appendFileSync(process.env.GITHUB_ENV, `TAG=${tag}\n`);
+          NODE
+
+      - name: Create or verify annotated tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_REF="refs/tags/$TAG"
+          if git ls-remote --exit-code --tags origin "$TAG_REF" >/dev/null 2>&1; then
+            git fetch --no-tags origin "$TAG_REF:$TAG_REF"
+            git show-ref --tags --verify --quiet "$TAG_REF"
+            TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
+            if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
+              echo "Existing tag $TAG points to $TAG_COMMIT, not $GITHUB_SHA." >&2
+              exit 1
+            fi
+          else
+            git tag -a "$TAG" "$GITHUB_SHA" -m "$TAG"
+            git push origin "$TAG"
+          fi
+
+      - name: Create GitHub release
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$TAG" artifacts/*.dmg artifacts/*.exe \
+            --verify-tag \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes
