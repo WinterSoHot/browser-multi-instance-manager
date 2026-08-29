@@ -32,6 +32,47 @@ function jobBlock(name) {
     : workflow.slice(contentStart, contentStart + nextJobOffset);
 }
 
+function stepBlock(jobName, stepName) {
+  const block = jobBlock(jobName);
+  const marker = `      - name: ${stepName}\n`;
+  const startIndex = block.indexOf(marker);
+  assert.notEqual(startIndex, -1, `Missing step: ${jobName} / ${stepName}`);
+
+  const contentStart = startIndex + marker.length;
+  const nextStepOffset = block.slice(contentStart).search(/^      - name: /m);
+  return nextStepOffset === -1
+    ? block.slice(contentStart)
+    : block.slice(contentStart, contentStart + nextStepOffset);
+}
+
+function runStepBody(jobName, stepName) {
+  const block = stepBlock(jobName, stepName);
+  const marker = '        run: |\n';
+  const startIndex = block.indexOf(marker);
+  assert.notEqual(startIndex, -1, `Missing run block: ${jobName} / ${stepName}`);
+
+  return block
+    .slice(startIndex + marker.length)
+    .replace(/^ {10}/gm, '')
+    .trimEnd();
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hasExactLine(text, line) {
+  return new RegExp(`^\\s*${escapeRegExp(line)}\\s*$`, 'm').test(text);
+}
+
+function assertHasExactLine(text, line) {
+  assert.match(text, new RegExp(`^\\s*${escapeRegExp(line)}\\s*$`, 'm'));
+}
+
+function matchesExactLines(text, lines) {
+  return lines.every((line) => hasExactLine(text, line));
+}
+
 const jobsIndex = workflow.indexOf('jobs:\n');
 assert.notEqual(jobsIndex, -1, 'Missing jobs block');
 const topLevelBlock = workflow.slice(0, jobsIndex);
@@ -40,6 +81,20 @@ const prepareBlock = jobBlock('prepare');
 const buildMacBlock = jobBlock('build-mac');
 const buildWinBlock = jobBlock('build-win');
 const releaseBlock = jobBlock('release');
+const prepareReleaseStateBody = runStepBody('prepare', 'Determine release state');
+const releaseTagStateBody = runStepBody('release', 'Create or verify annotated tag');
+const remoteStateContractLines = [
+  'RELEASE_STATUS=$?',
+  'if [ "$RELEASE_STATUS" -ne 1 ] || ! grep -q "HTTP 404" "$RELEASE_ERROR"; then',
+  'TAG_STATUS=$?',
+  'if [ "$TAG_STATUS" -ne 2 ]; then',
+];
+const annotatedTagContractLines = [
+  'TAG_TYPE="$(git cat-file -t "$TAG")"',
+  'if [ "$TAG_TYPE" != "tag" ]; then',
+  'TAG_COMMIT="$(git rev-list -n 1 "$TAG")"',
+  'if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then',
+];
 
 test('release workflow triggers every main push without run-canceling concurrency', () => {
   assert.match(triggerBlock, /pull_request:/);
@@ -60,20 +115,34 @@ test('prepare validates matching manifest versions and derives the tag dynamical
 });
 
 test('prepare refuses non-main dispatches and fails closed on remote lookup errors', () => {
-  assert.match(prepareBlock, /GITHUB_EVENT_NAME[^\n]*pull_request/);
-  assert.match(prepareBlock, /GITHUB_REF[^\n]*refs\/heads\/main/);
-  assert.match(prepareBlock, /workflow_dispatch releases must target refs\/heads\/main/);
-  assert.match(prepareBlock, /RELEASE_STATUS[^\n]*-ne 1/);
-  assert.match(prepareBlock, /grep -q ["']HTTP 404["']/);
-  assert.match(prepareBlock, /TAG_STATUS[^\n]*-ne 2/);
-  assert.match(prepareBlock, /Unable to determine whether remote tag/);
+  assertHasExactLine(prepareReleaseStateBody, 'if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then');
+  assertHasExactLine(prepareReleaseStateBody, 'if [ "$GITHUB_REF" != "refs/heads/main" ]; then');
+  assertHasExactLine(prepareReleaseStateBody, 'echo "workflow_dispatch releases must target refs/heads/main" >&2');
+  assert.equal(matchesExactLines(prepareReleaseStateBody, remoteStateContractLines), true);
+  assertHasExactLine(prepareReleaseStateBody, 'echo "Unable to determine whether remote tag $TAG exists." >&2');
 });
 
 test('prepare accepts only a same-commit annotated existing tag', () => {
-  assert.match(prepareBlock, /git cat-file -t ["']\$TAG["']/);
-  assert.match(prepareBlock, /TAG_TYPE[^\n]*!= ["']tag["']/);
-  assert.match(prepareBlock, /git rev-list -n 1 ["']\$TAG["']/);
-  assert.match(prepareBlock, /TAG_COMMIT[^\n]*!= ["']\$GITHUB_SHA["']/);
+  assert.equal(matchesExactLines(prepareReleaseStateBody, annotatedTagContractLines), true);
+});
+
+test('workflow contract matchers reject inline-comment and echo-only fakes', () => {
+  const fakeRemoteState = [
+    'echo "RELEASE_STATUS guard starts here"',
+    'true # if [ "$RELEASE_STATUS" -ne 1 ] || ! grep -q "HTTP 404" "$RELEASE_ERROR"; then',
+    'echo "TAG_STATUS guard starts here"',
+    'true # if [ "$TAG_STATUS" -ne 2 ]; then',
+    'echo "Unable to determine whether remote tag $TAG exists."',
+  ].join('\n');
+  const fakeAnnotatedTag = [
+    'echo \'TAG_TYPE="$(git cat-file -t "$TAG")"\'',
+    'echo \'if [ "$TAG_TYPE" != "tag" ]; then\'',
+    'echo \'TAG_COMMIT="$(git rev-list -n 1 "$TAG")"\'',
+    'echo \'if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then\'',
+  ].join('\n');
+
+  assert.equal(matchesExactLines(fakeRemoteState, remoteStateContractLines), false);
+  assert.equal(matchesExactLines(fakeAnnotatedTag, annotatedTagContractLines), false);
 });
 
 test('platform jobs always test and conditionally package and upload', () => {
@@ -106,15 +175,10 @@ test('release waits for prepare and both builders before publishing artifacts', 
 });
 
 test('release rechecks remote state and accepts only an annotated existing tag', () => {
-  assert.match(releaseBlock, /RELEASE_STATUS[^\n]*-ne 1/);
-  assert.match(releaseBlock, /grep -q ["']HTTP 404["']/);
-  assert.match(releaseBlock, /TAG_STATUS[^\n]*-ne 2/);
-  assert.match(releaseBlock, /Unable to determine whether remote tag/);
-  assert.match(releaseBlock, /git cat-file -t ["']\$TAG["']/);
-  assert.match(releaseBlock, /TAG_TYPE[^\n]*!= ["']tag["']/);
-  assert.match(releaseBlock, /git rev-list -n 1 ["']\$TAG["']/);
-  assert.match(releaseBlock, /TAG_COMMIT[^\n]*!= ["']\$GITHUB_SHA["']/);
-  assert.doesNotMatch(releaseBlock, /git (?:tag|push)[^\n]*(?:--force|\s-f\b)/);
+  assert.equal(matchesExactLines(releaseTagStateBody, remoteStateContractLines), true);
+  assertHasExactLine(releaseTagStateBody, 'echo "Unable to determine whether remote tag $TAG exists." >&2');
+  assert.equal(matchesExactLines(releaseTagStateBody, annotatedTagContractLines), true);
+  assert.doesNotMatch(releaseTagStateBody, /^git (?:tag|push).*(?:--force|\s-f\b).*$/m);
 });
 
 test('release workflow keeps permissions scoped to each job', () => {
