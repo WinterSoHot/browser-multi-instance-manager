@@ -52,7 +52,7 @@ test('treats case and Unicode-normalized profile names as the same directory nam
 });
 
 test('resolves profile directories below the selected browser directory', () => {
-  const baseDir = path.join(path.sep, 'app-data', 'profiles');
+  const baseDir = path.resolve(path.sep, 'app-data', 'profiles');
   assert.equal(
     profileUtils.resolveProfilePath?.(baseDir, 'firefox', '个人'),
     path.join(baseDir, 'firefox', '个人'),
@@ -64,7 +64,7 @@ test('resolves profile directories below the selected browser directory', () => 
 });
 
 test('detects stored profile paths that do not match their controlled directory', () => {
-  const baseDir = path.join(path.sep, 'app-data', 'profiles');
+  const baseDir = path.resolve(path.sep, 'app-data', 'profiles');
   assert.equal(
     profileUtils.isStoredProfilePathSafe?.(
       baseDir,
@@ -104,7 +104,7 @@ test('detects stored profile paths that do not match their controlled directory'
 });
 
 test('keeps process records only when they match a current safe profile', () => {
-  const baseDir = path.join(path.sep, 'app-data', 'profiles');
+  const baseDir = path.resolve(path.sep, 'app-data', 'profiles');
   const profile = {
     id: 'profile-1',
     browserType: 'chrome',
