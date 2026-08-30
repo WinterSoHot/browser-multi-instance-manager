@@ -184,6 +184,20 @@ test('sorts profiles deterministically across name, creation, recent use, and st
   assert.deepEqual(profiles.map((profile) => profile.id), ['p3', 'p2', 'p1', 'p4']);
 });
 
+test('creation sorting places invalid and missing timestamps after every valid date', () => {
+  const profiles = [
+    { id: 'invalid', name: 'Alpha', createdAt: 'not-a-date' },
+    { id: 'epoch', name: 'Bravo', createdAt: '1970-01-01T00:00:00.000Z' },
+    { id: 'missing', name: 'Charlie' },
+    { id: 'before-epoch', name: 'Delta', createdAt: '1960-01-01T00:00:00.000Z' },
+  ];
+
+  assert.deepEqual(
+    viewUtils.sortProfiles?.(profiles, 'created-desc', {}).map((profile) => profile.id),
+    ['epoch', 'before-epoch', 'invalid', 'missing'],
+  );
+});
+
 test('treats all editable controls as keyboard shortcut boundaries', () => {
   assert.equal(viewUtils.isEditableTarget?.({ tagName: 'INPUT' }), true);
   assert.equal(viewUtils.isEditableTarget?.({ tagName: 'TEXTAREA' }), true);

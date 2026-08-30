@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { createProfileOperationCoordinator } = require('../lib/profile-operation-coordinator');
 
 let createProfileService;
 try {
@@ -253,6 +254,107 @@ test('markLaunched replaces only the targeted profile metadata', async () => {
     { ...profiles[0], lastLaunchedAt: '2026-01-02T03:04:05.000Z' },
     profiles[1],
   ]);
+});
+
+test('successful launch records the timestamp after a concurrent global mutation commits', { timeout: 1000 }, async () => {
+  let profiles = [{
+    id: 'p1',
+    browserType: 'chrome',
+    name: 'Work',
+    path: '/profiles/chrome/Work',
+    lastLaunchedAt: null,
+  }];
+  const coordinator = createProfileOperationCoordinator();
+  let beginGlobalMutation;
+  const globalMutationStarted = new Promise((resolve) => {
+    beginGlobalMutation = resolve;
+  });
+  let releaseGlobalMutation;
+  const waitForGlobalMutation = new Promise((resolve) => {
+    releaseGlobalMutation = resolve;
+  });
+  const service = createProfileService({
+    appStore: {
+      getProfiles: () => structuredClone(profiles),
+      setProfiles: (nextProfiles) => {
+        profiles = structuredClone(nextProfiles);
+      },
+    },
+    profileOperations: coordinator,
+    browserProcessManager: {
+      launch: async () => ({ success: true, pid: 42 }),
+    },
+    getBrowserExecutable: () => '/Applications/Google Chrome.app',
+    getProfilesDir: () => '/profiles',
+    pathExists: async () => true,
+    now: () => '2026-01-02T03:04:05.000Z',
+  });
+
+  const pendingGlobalMutation = coordinator.runGlobalMutation(async () => {
+    const staleProfiles = structuredClone(profiles);
+    beginGlobalMutation();
+    await waitForGlobalMutation;
+    staleProfiles.push({
+      id: 'p2',
+      browserType: 'firefox',
+      name: 'Personal',
+      path: '/profiles/firefox/Personal',
+      lastLaunchedAt: null,
+    });
+    profiles = staleProfiles;
+  });
+  await globalMutationStarted;
+
+  const launched = service.launch('p1');
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseGlobalMutation();
+
+  assert.deepEqual(await launched, { success: true, pid: 42 });
+  await pendingGlobalMutation;
+  assert.deepEqual(profiles.map((profile) => profile.id), ['p1', 'p2']);
+  assert.equal(profiles[0].lastLaunchedAt, '2026-01-02T03:04:05.000Z');
+});
+
+test('markLaunched uses the global mutation queue instead of waiting for lifecycle work', async () => {
+  let profiles = [{
+    id: 'p1',
+    browserType: 'chrome',
+    name: 'Work',
+    path: '/profiles/chrome/Work',
+    lastLaunchedAt: null,
+  }];
+  const coordinator = createProfileOperationCoordinator();
+  let beginLifecycle;
+  const lifecycleStarted = new Promise((resolve) => {
+    beginLifecycle = resolve;
+  });
+  let releaseLifecycle;
+  const waitForLifecycle = new Promise((resolve) => {
+    releaseLifecycle = resolve;
+  });
+  const service = createProfileService({
+    appStore: {
+      getProfiles: () => structuredClone(profiles),
+      setProfiles: (nextProfiles) => {
+        profiles = structuredClone(nextProfiles);
+      },
+    },
+    profileOperations: coordinator,
+  });
+
+  const pendingLifecycle = coordinator.runLifecycle('p1', async () => {
+    beginLifecycle();
+    await waitForLifecycle;
+  });
+  await lifecycleStarted;
+
+  const marked = service.markLaunched('p1', '2026-01-02T03:04:05.000Z');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(profiles[0].lastLaunchedAt, '2026-01-02T03:04:05.000Z');
+
+  releaseLifecycle();
+  await pendingLifecycle;
+  assert.equal((await marked).success, true);
 });
 
 test('export and import keep only profile metadata and skip duplicate names', async () => {

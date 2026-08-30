@@ -152,9 +152,14 @@
       .map((profile, index) => ({ profile, index }))
       .sort((left, right) => {
         if (sortMode === 'created-desc') {
-          const difference = (timestampValue(right.profile.createdAt) || 0)
-            - (timestampValue(left.profile.createdAt) || 0);
-          if (difference !== 0) return difference;
+          const leftTimestamp = timestampValue(left.profile.createdAt);
+          const rightTimestamp = timestampValue(right.profile.createdAt);
+          if (leftTimestamp === null || rightTimestamp === null) {
+            if (leftTimestamp !== null) return -1;
+            if (rightTimestamp !== null) return 1;
+          } else if (rightTimestamp !== leftTimestamp) {
+            return rightTimestamp - leftTimestamp;
+          }
         }
 
         if (sortMode === 'recent-desc') {
