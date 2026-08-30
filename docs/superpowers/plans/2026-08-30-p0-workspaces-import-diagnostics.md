@@ -211,13 +211,14 @@ git commit -m "新增安全导入预览与冲突处理"
 - Create: `lib/diagnostics-service.js`
 - Create: `test/diagnostics-service.test.js`
 - Modify: `lib/ipc-handlers.js`
+- Modify: `main.js`
 - Modify: `preload.js`
 - Modify: `renderer/index.html`
 - Modify: `renderer/index.js`
 - Modify: `renderer/styles.css`
 
 **Interfaces:**
-- Produces: `createDiagnosticsService(dependencies)` with `inspect(profileId)` and `repairMissingDirectory(profileId)`.
+- Produces: `createDiagnosticsService({ appStore, profileOperations, browserProcessManager, getBrowserExecutable, getProfilesDir, pathExists, createProfileDir })` with `inspect(profileId)` and `repairMissingDirectory(profileId)`; construct and inject it in `main.js`.
 - `inspect` returns `{ state, actions }`, where state is `healthy`, `browser-path-invalid`, `profile-directory-missing`, or `process-unknown`.
 
 - [ ] **Step 1: Add failing state and safety tests**
@@ -237,7 +238,7 @@ Run: `node --test test/diagnostics-service.test.js`
 
 - [ ] **Step 3: Implement structured diagnosis and repair**
 
-Force-refresh the process status before repairs. Only create the exact validated profile path when status is definitively stopped and the path is absent. Return stable codes without raw paths, PIDs, commands, or system error text.
+Force-refresh the process status before repairs, inside the shared per-profile mutation/lifecycle coordinator. Only create the exact validated profile path when status is definitively stopped and the path is absent. Return stable codes without raw paths, PIDs, commands, or system error text. State precedence is process unknown, invalid browser path, missing profile directory, then healthy; running state suppresses directory repair actions even when the directory is missing.
 
 - [ ] **Step 4: Add card badges and diagnostic modal**
 
@@ -248,7 +249,7 @@ Expose retry, open settings, and recreate-empty-directory actions only when list
 Run: `node --test test/diagnostics-service.test.js test/browser-process-manager.test.js && npm test`
 
 ```bash
-git add lib/diagnostics-service.js lib/ipc-handlers.js preload.js renderer/index.html renderer/index.js renderer/styles.css test/diagnostics-service.test.js
+git add lib/diagnostics-service.js lib/ipc-handlers.js main.js preload.js renderer/index.html renderer/index.js renderer/styles.css test/diagnostics-service.test.js
 git commit -m "新增配置诊断与安全修复"
 ```
 
