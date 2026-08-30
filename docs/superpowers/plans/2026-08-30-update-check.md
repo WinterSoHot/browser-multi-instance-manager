@@ -17,6 +17,8 @@
 - Manual checks bypass the time cache but share an in-flight request.
 - Accept only this repository's HTTPS GitHub release page.
 - Never download, execute, or install an update.
+- Cache only validated successful results, bind them to the checking app version, and ignore future timestamps.
+- The fixed GitHub client rejects redirects and oversized bodies; failures never suppress retries for 24 hours.
 
 ---
 
@@ -55,7 +57,7 @@ Run: `node --test test/update-checker.test.js`
 
 - [ ] **Step 3: Implement semver and strict URL checks**
 
-Support stable `MAJOR.MINOR.PATCH` versions only. Parse with a regular expression and compare numeric components as safe integers. Require protocol `https:`, hostname `github.com`, and pathname prefix `/WinterSoHot/browser-multi-instance-manager/releases/tag/`.
+Support stable `MAJOR.MINOR.PATCH` versions only, rejecting leading zeroes. Parse with a regular expression and compare numeric components as safe integers. Require protocol `https:`, hostname `github.com`, no credentials/port/query/hash, and an exact pathname `/WinterSoHot/browser-multi-instance-manager/releases/tag/v<version>`. The response tag and URL tag must be identical.
 
 - [ ] **Step 4: Verify and commit**
 
@@ -71,12 +73,15 @@ git commit -m "新增更新版本与发布地址校验"
 **Files:**
 - Modify: `lib/update-checker.js`
 - Modify: `test/update-checker.test.js`
+- Create: `lib/github-release-client.js`
+- Create: `test/github-release-client.test.js`
 - Modify: `lib/app-store.js`
 - Modify: `test/app-store.test.js`
 
 **Interfaces:**
 - Consumes: `currentVersion`, `requestLatestRelease({ signal })`, `now`, `cache`, `timeoutMs`.
 - Produces: 24-hour caching, five-second timeout, and one shared in-flight check.
+- Persists: `{ checkedAt, checkedVersion, result }`, where `result` is only validated `current` or `available` data.
 
 - [ ] **Step 1: Add failing cache, force, timeout, and single-flight tests**
 
@@ -99,11 +104,11 @@ test('automatic check uses a result newer than less than 24 hours', async () => 
 
 - [ ] **Step 2: Implement abortable request orchestration**
 
-Use `AbortController`, a five-second timer, and `finally` to clear both timer and in-flight promise. Map timeout, HTTP, parse, rate-limit, and validation failures to stable codes without response bodies or local details.
+Use `AbortController`, a five-second timer, and `finally` to clear both timer and in-flight promise. The fixed HTTPS client requests only GitHub's exact latest-release API endpoint, sends explicit `Accept` and `User-Agent` headers, requires HTTP 200 JSON, rejects redirects, and caps the body at 256 KiB before parsing. Map timeout, HTTP, parse, rate-limit, oversized-body, and validation failures to stable codes without response bodies or local details.
 
 - [ ] **Step 3: Persist minimal cache fields**
 
-Store `lastUpdateCheckAt` and a validated `{ status, version?, releaseUrl? }`. Do not store response headers, IP addresses, tokens, or raw bodies.
+Store the minimal cache shape above. Revalidate cached results against `currentVersion`; a different checking version, an invalid/future timestamp, or malformed cached result forces a network check. Do not cache errors or store response headers, IP addresses, tokens, or raw bodies.
 
 - [ ] **Step 4: Verify and commit**
 
@@ -141,7 +146,7 @@ test('release page IPC rejects non-GitHub and mismatched repository URLs', async
 
 - [ ] **Step 2: Register narrow APIs and revalidate before opening**
 
-The renderer cannot send arbitrary URLs to `shell.openExternal`. `open-release-page` must call the same strict validator used for API responses before opening the HTTPS page.
+Extend the centralized app-settings schema with `checkUpdatesOnStartup: boolean` (default `true`) without breaking `closeToTray`. The renderer cannot send arbitrary URLs to `shell.openExternal`. `open-release-page` must call the same strict validator used for API responses before opening the HTTPS page, and open failures return a stable result.
 
 - [ ] **Step 3: Add settings and main-page notice**
 
@@ -149,7 +154,7 @@ Show current `app.getVersion()`, a startup-check checkbox, a busy “立即检�
 
 - [ ] **Step 4: Start the automatic check after window creation**
 
-When enabled, schedule the check after the initial window is ready. Do not await it from `initializationPromise`; deliver a validated result to the renderer through a narrow event.
+When enabled, schedule exactly one check only after the initial window's `did-finish-load`, so the result event cannot beat renderer subscription. Do not await it from `initializationPromise`; deliver only a validated result through a narrow event. Recreated windows must not trigger another network check inside the 24-hour window.
 
 - [ ] **Step 5: Verify and commit**
 
