@@ -27,9 +27,9 @@
           <button id="openWorkspaceModal" class="btn btn-secondary btn-small" type="button">管理</button>
         </div>
         <div id="workspaceFilters" class="workspace-filter-list">
-          <button class="workspace-filter-btn active" type="button" data-workspace-filter="all">全部</button>
-          <button class="workspace-filter-btn" type="button" data-workspace-filter="favorites">收藏</button>
-          <button class="workspace-filter-btn" type="button" data-workspace-filter="unassigned">未分组</button>
+          <button class="workspace-filter-btn active" type="button" data-workspace-filter="all" aria-pressed="true">全部</button>
+          <button class="workspace-filter-btn" type="button" data-workspace-filter="favorites" aria-pressed="false">收藏</button>
+          <button class="workspace-filter-btn" type="button" data-workspace-filter="unassigned" aria-pressed="false">未分组</button>
           <div id="workspaceList" class="workspace-custom-list"></div>
         </div>
         <div id="workspaceBatchActions" class="workspace-batch-actions" hidden>
@@ -89,11 +89,11 @@
           <input type="text" id="searchInput" class="search-input" placeholder="搜索配置名称...">
         </div>
         <div class="filter-group">
-          <button class="filter-btn active" data-filter="all">全部</button>
-          <button class="filter-btn" data-filter="chrome">Chrome</button>
-          <button class="filter-btn" data-filter="firefox">Firefox</button>
-          <button class="filter-btn" data-filter="edge">Edge</button>
-          <button class="filter-btn" data-filter="zen">Zen</button>
+          <button class="filter-btn active" data-filter="all" aria-pressed="true">全部</button>
+          <button class="filter-btn" data-filter="chrome" aria-pressed="false">Chrome</button>
+          <button class="filter-btn" data-filter="firefox" aria-pressed="false">Firefox</button>
+          <button class="filter-btn" data-filter="edge" aria-pressed="false">Edge</button>
+          <button class="filter-btn" data-filter="zen" aria-pressed="false">Zen</button>
         </div>
       </div>
 
@@ -146,9 +146,9 @@
   </div>
 
   <!-- 工作区管理弹窗 -->
-  <div id="workspaceModal" class="modal">
+  <div id="workspaceModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="workspaceModalTitle">
     <div class="modal-content workspace-modal-content">
-      <h3>管理工作区</h3>
+      <h3 id="workspaceModalTitle">管理工作区</h3>
       <form id="workspaceForm">
         <div class="form-group">
           <label for="workspaceName">新工作区名称</label>
@@ -163,9 +163,9 @@
     </div>
   </div>
 
-  <div id="workspaceRenameModal" class="modal">
+  <div id="workspaceRenameModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="workspaceRenameModalTitle">
     <div class="modal-content">
-      <h3>重命名工作区</h3>
+      <h3 id="workspaceRenameModalTitle">重命名工作区</h3>
       <form id="workspaceRenameForm">
         <div class="form-group">
           <label for="newWorkspaceName">新名称</label>
@@ -179,9 +179,9 @@
     </div>
   </div>
 
-  <div id="workspaceDeleteModal" class="modal">
+  <div id="workspaceDeleteModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="workspaceDeleteModalTitle">
     <div class="modal-content">
-      <h3>删除工作区</h3>
+      <h3 id="workspaceDeleteModalTitle">删除工作区</h3>
       <p id="workspaceDeleteMessage">删除后，其中的配置会保留并变为未分组。</p>
       <div class="modal-actions">
         <button id="confirmWorkspaceDelete" type="button" class="btn btn-danger">删除</button>
@@ -195,6 +195,7 @@
 
   <script src="view-utils.js"></script>
   <script src="profile-state.js"></script>
+  <script src="workspace-batch.js"></script>
   <script src="index.js"></script>
 </body>
 </html>

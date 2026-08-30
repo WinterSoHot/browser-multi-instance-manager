@@ -19,8 +19,8 @@ function loadBrowserApi() {
           },
         },
         ipcRenderer: {
-          invoke(channel, payload) {
-            invocations.push({ channel, payload });
+          invoke(channel, ...args) {
+            invocations.push({ channel, args });
             return Promise.resolve({ success: true });
           },
           on() {},
@@ -43,17 +43,29 @@ test('preload exposes narrow workspace and favorite APIs with their intended pay
   await browserApi.setProfileFavorite('profile-1', true);
 
   assert.deepEqual(JSON.parse(JSON.stringify(invocations)), [
-    { channel: 'get-workspaces' },
-    { channel: 'create-workspace', payload: { name: 'Work' } },
-    { channel: 'rename-workspace', payload: { workspaceId: 'workspace-1', name: 'Projects' } },
-    { channel: 'delete-workspace', payload: { workspaceId: 'workspace-1' } },
+    { channel: 'get-workspaces', args: [] },
+    { channel: 'create-workspace', args: [{ name: 'Work' }] },
+    { channel: 'rename-workspace', args: [{ workspaceId: 'workspace-1', name: 'Projects' }] },
+    { channel: 'delete-workspace', args: [{ workspaceId: 'workspace-1' }] },
     {
       channel: 'assign-profile-workspace',
-      payload: { profileId: 'profile-1', workspaceId: null },
+      args: [{ profileId: 'profile-1', workspaceId: null }],
     },
     {
       channel: 'set-profile-favorite',
-      payload: { profileId: 'profile-1', favorite: true },
+      args: [{ profileId: 'profile-1', favorite: true }],
     },
+  ]);
+});
+
+test('preload forwards optional forced browser-status snapshots while retaining array calls', async () => {
+  const { browserApi, invocations } = loadBrowserApi();
+
+  await browserApi.getBrowserStatuses(['profile-1']);
+  await browserApi.getBrowserStatuses(['profile-2'], { force: true });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(invocations)), [
+    { channel: 'get-browser-statuses', args: [['profile-1']] },
+    { channel: 'get-browser-statuses', args: [['profile-2'], { force: true }] },
   ]);
 });

@@ -212,6 +212,25 @@ test('does not treat an assignment select as a profile-card selection click', ()
   assert.equal(viewUtils.shouldToggleProfileCardSelection?.({ tagName: 'DIV' }), true);
 });
 
+test('does not select a card when a label wraps a workspace select', () => {
+  const label = { tagName: 'LABEL' };
+  const select = {
+    tagName: 'SELECT',
+    closest(selector) {
+      return selector.includes('label') ? label : null;
+    },
+  };
+  const labelText = {
+    tagName: 'SPAN',
+    closest(selector) {
+      return selector.includes('label') ? label : null;
+    },
+  };
+
+  assert.equal(viewUtils.shouldToggleProfileCardSelection?.(select), false);
+  assert.equal(viewUtils.shouldToggleProfileCardSelection?.(labelText), false);
+});
+
 test('runs bulk work with a fixed concurrency limit and preserves result order', async () => {
   let active = 0;
   let peak = 0;

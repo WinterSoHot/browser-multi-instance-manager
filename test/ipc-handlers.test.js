@@ -130,12 +130,12 @@ test('profile IPC delegates the original payload and forwards the service result
   assert.equal(result, serviceResult);
 });
 
-test('process IPC validates bulk IDs and forwards refresh options', async () => {
+test('process IPC validates bulk IDs and forwards optional forced snapshots', async () => {
   const statusCalls = [];
   const { handlers } = createHandlerFixture({
     browserProcessManager: {
-      getStatuses(profileIds) {
-        statusCalls.push({ method: 'getStatuses', profileIds });
+      getStatuses(profileIds, options) {
+        statusCalls.push({ method: 'getStatuses', profileIds, options });
         return { 'profile-1': { running: true } };
       },
       getStatus(profileId, options) {
@@ -150,11 +150,20 @@ test('process IPC validates bulk IDs and forwards refresh options', async () => 
     { 'profile-1': { running: true } },
   );
   assert.deepEqual(
+    await handlers.get('get-browser-statuses')({}, ['profile-3'], { force: true }),
+    { 'profile-1': { running: true } },
+  );
+  assert.throws(
+    () => handlers.get('get-browser-statuses')({}, ['profile-4'], { force: 'true' }),
+    /Invalid browser status options/,
+  );
+  assert.deepEqual(
     await handlers.get('refresh-browser-status')({}, 'profile-2'),
     { running: false },
   );
   assert.deepEqual(statusCalls, [
-    { method: 'getStatuses', profileIds: ['profile-1'] },
+    { method: 'getStatuses', profileIds: ['profile-1'], options: { force: false } },
+    { method: 'getStatuses', profileIds: ['profile-3'], options: { force: true } },
     { method: 'getStatus', profileId: 'profile-2', options: { force: true } },
   ]);
 });

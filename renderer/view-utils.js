@@ -204,7 +204,8 @@
   }
 
   function shouldToggleProfileCardSelection(target) {
-    return !isEditableTarget(target);
+    if (isEditableTarget(target)) return false;
+    return !target?.closest?.('label, button, input, textarea, select, [role="button"]');
   }
 
   async function mapWithConcurrency(items, limit, worker, onProgress = () => {}) {

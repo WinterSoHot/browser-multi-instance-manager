@@ -13,7 +13,11 @@ contextBridge.exposeInMainWorld('browserAPI', {
   launchBrowser: (profileId) => ipcRenderer.invoke('launch-browser', profileId),
   closeBrowser: (profileId) => ipcRenderer.invoke('close-browser', profileId),
   getBrowserStatus: (profileId) => ipcRenderer.invoke('get-browser-status', profileId),
-  getBrowserStatuses: (profileIds) => ipcRenderer.invoke('get-browser-statuses', profileIds),
+  getBrowserStatuses: (profileIds, options) => (
+    options === undefined
+      ? ipcRenderer.invoke('get-browser-statuses', profileIds)
+      : ipcRenderer.invoke('get-browser-statuses', profileIds, options)
+  ),
   refreshBrowserStatus: (profileId) => ipcRenderer.invoke('refresh-browser-status', profileId),
   forgetBrowserProcess: (profileId, acknowledgePossibleRunning = false) =>
     ipcRenderer.invoke('forget-browser-process', { profileId, acknowledgePossibleRunning }),

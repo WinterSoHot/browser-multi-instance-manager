@@ -16,6 +16,7 @@ const {
   summarizeResults,
 } = window.viewUtils;
 const { createProfileState } = window.profileState;
+const { executeWorkspaceBatch, createWorkspaceBatchRunner } = window.workspaceBatch;
 
 const profileState = createProfileState();
 let currentRenameId = null;
@@ -254,13 +255,15 @@ function renderWorkspaceSidebar() {
     : null;
 
   workspaceList.innerHTML = workspaces.map((workspace) => `
-    <button class="workspace-filter-btn ${workspace.id === workspaceId ? 'active' : ''}" type="button" data-workspace-filter="workspace:${escapeHtml(workspace.id)}">
+    <button class="workspace-filter-btn ${workspace.id === workspaceId ? 'active' : ''}" type="button" data-workspace-filter="workspace:${escapeHtml(workspace.id)}" aria-pressed="${workspace.id === workspaceId}">
       ${escapeHtml(workspace.name)}
     </button>
   `).join('');
 
   document.querySelectorAll('[data-workspace-filter]').forEach((button) => {
-    button.classList.toggle('active', button.dataset.workspaceFilter === filter);
+    const active = button.dataset.workspaceFilter === filter;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
   });
   workspaceActions.hidden = workspaceId === null || getWorkspaceById(workspaceId) === null;
 }
@@ -282,7 +285,10 @@ function renderWorkspaceModalList() {
 
 function setWorkspaceFilter(filter) {
   profileState.setFilter(filter);
-  document.querySelectorAll('.filter-btn').forEach((button) => button.classList.remove('active'));
+  document.querySelectorAll('.filter-btn').forEach((button) => {
+    button.classList.remove('active');
+    button.setAttribute('aria-pressed', 'false');
+  });
   renderProfiles();
 }
 
@@ -328,15 +334,8 @@ async function assignProfileWorkspace(profileId, workspaceId) {
   }
 }
 
-async function getFreshWorkspaceStatusSnapshot(profiles) {
-  const entries = await mapWithConcurrency(profiles, 4, async (profile) => {
-    try {
-      return [profile.id, await window.browserAPI.refreshBrowserStatus(profile.id)];
-    } catch {
-      return [profile.id, { verificationUnavailable: true }];
-    }
-  });
-  const normalized = normalizeStatusSnapshot(Object.fromEntries(entries));
+function applyWorkspaceStatusSnapshot(profiles, snapshot) {
+  const normalized = normalizeStatusSnapshot(snapshot);
   const current = profileState.getSnapshot();
   const runningIds = new Set(current.runningIds);
   const unknownIds = new Set(current.unknownIds);
@@ -350,18 +349,49 @@ async function getFreshWorkspaceStatusSnapshot(profiles) {
   normalized.unknownIds.forEach((profileId) => unknownIds.add(profileId));
   normalized.retryableCloseIds.forEach((profileId) => retryableCloseIds.add(profileId));
   profileState.setStatuses({ runningIds, unknownIds, retryableCloseIds });
-  return createStatusMembership(normalized);
 }
 
-async function runWorkspaceBatch(action) {
-  const { filter, profiles } = profileState.getSnapshot();
+function applyWorkspaceBatchResults(action, targetIds, results) {
+  const snapshot = profileState.getSnapshot();
+  const runningIds = new Set(snapshot.runningIds);
+  const unknownIds = new Set(snapshot.unknownIds);
+  const retryableCloseIds = new Set(snapshot.retryableCloseIds);
+  results.forEach((result, index) => {
+    if (!result.success) return;
+    const profileId = targetIds[index];
+    if (action === 'launch') {
+      runningIds.add(profileId);
+      unknownIds.delete(profileId);
+      retryableCloseIds.delete(profileId);
+      return;
+    }
+    runningIds.delete(profileId);
+    unknownIds.delete(profileId);
+    retryableCloseIds.delete(profileId);
+  });
+  profileState.setStatuses({ runningIds, unknownIds, retryableCloseIds });
+}
+
+async function refreshProfilesAfterSuccessfulLaunch(results) {
+  if (!results.some((result) => result.success)) return false;
+  try {
+    profileState.setProfiles(await window.browserAPI.getProfiles());
+    return true;
+  } catch (error) {
+    showToast(`刷新配置失败：${error?.message || '请求失败'}`, 'warning');
+    return false;
+  }
+}
+
+async function performWorkspaceBatch(action) {
+  const { filter } = profileState.getSnapshot();
   const workspaceId = filter.startsWith('workspace:')
     ? filter.slice('workspace:'.length)
     : null;
   const workspace = workspaceId ? getWorkspaceById(workspaceId) : null;
   if (!workspace) return;
 
-  const targets = profiles.filter((profile) => profile.workspaceId === workspaceId);
+  const targets = getVisibleProfiles().filter((profile) => profile.workspaceId === workspaceId);
   if (targets.length === 0) {
     showToast('此工作区没有配置', 'info');
     return;
@@ -372,37 +402,28 @@ async function runWorkspaceBatch(action) {
   const activeButton = action === 'launch' ? launchButton : closeButton;
   launchButton.disabled = true;
   closeButton.disabled = true;
+  targets.forEach((profile) => busyProfiles.add(profile.id));
+  renderProfiles();
   try {
-    const status = await getFreshWorkspaceStatusSnapshot(targets);
-    const profileIds = targets.map((profile) => profile.id);
-    const targetIds = action === 'launch'
-      ? profileIds.filter((profileId) => (
-        !status.runningIds.has(profileId) && !status.unknownIds.has(profileId)
-      ))
-      : filterCloseableProfileIds(profileIds, status.runningIds, status.retryableCloseIds);
-    if (targetIds.length === 0) {
+    const batch = await executeWorkspaceBatch({
+      action,
+      profiles: targets,
+      getBrowserStatuses: window.browserAPI.getBrowserStatuses,
+      launchBrowser: window.browserAPI.launchBrowser,
+      closeBrowser: window.browserAPI.closeBrowser,
+      onProgress(completed, total) {
+        activeButton.textContent = `${action === 'launch' ? '启动' : '关闭'}中 ${completed}/${total}`;
+      },
+    });
+    applyWorkspaceStatusSnapshot(targets, batch.snapshot);
+    if (batch.targetIds.length === 0) {
       showToast(action === 'launch' ? '工作区内没有可安全启动的配置' : '工作区内没有可安全关闭的配置', 'info');
       return;
     }
-
-    targetIds.forEach((profileId) => busyProfiles.add(profileId));
+    applyWorkspaceBatchResults(action, batch.targetIds, batch.results);
+    if (action === 'launch') await refreshProfilesAfterSuccessfulLaunch(batch.results);
     renderProfiles();
-    const results = await mapWithConcurrency(targetIds, 4, async (profileId) => {
-      try {
-        return action === 'launch'
-          ? await window.browserAPI.launchBrowser(profileId)
-          : await window.browserAPI.closeBrowser(profileId);
-      } catch (error) {
-        return { success: false, error: error?.message || '请求失败' };
-      }
-    }, (completed, total) => {
-      activeButton.textContent = `${action === 'launch' ? '启动' : '关闭'}中 ${completed}/${total}`;
-    });
-
-    targetIds.forEach((profileId) => busyProfiles.delete(profileId));
-    await refreshAllStatuses().catch(() => {});
-    renderProfiles();
-    showBatchResult(action === 'launch' ? '启动' : '关闭', results);
+    showBatchResult(action === 'launch' ? '启动' : '关闭', batch.results);
   } finally {
     targets.forEach((profile) => busyProfiles.delete(profile.id));
     launchButton.disabled = false;
@@ -412,6 +433,8 @@ async function runWorkspaceBatch(action) {
     updateVisibleStatusCards();
   }
 }
+
+const runWorkspaceBatch = createWorkspaceBatchRunner(performWorkspaceBatch);
 
 document.getElementById('profilesList').addEventListener('click', (event) => {
   const button = event.target.closest('[data-profile-action]');
@@ -579,6 +602,8 @@ async function launchBrowserOnly(profileId) {
         unknownIds: snapshot.unknownIds,
         retryableCloseIds: snapshot.retryableCloseIds,
       });
+      await refreshProfilesAfterSuccessfulLaunch([result]);
+      renderProfiles();
       showToast('浏览器已启动', 'success');
     } else {
       showToast('启动浏览器失败：' + result.error, 'error');
@@ -818,6 +843,8 @@ document.getElementById('launchSelectedBtn').addEventListener('click', async () 
 
   const launchButton = document.getElementById('launchSelectedBtn');
   launchButton.disabled = true;
+  toLaunch.forEach((profileId) => busyProfiles.add(profileId));
+  updateVisibleStatusCards();
   const results = await mapWithConcurrency(toLaunch, 4, async (profileId) => {
     let result;
     try {
@@ -829,6 +856,7 @@ document.getElementById('launchSelectedBtn').addEventListener('click', async () 
   }, (completed, total) => {
     launchButton.textContent = `启动中 ${completed}/${total}`;
   });
+  toLaunch.forEach((profileId) => busyProfiles.delete(profileId));
   launchButton.disabled = false;
   launchButton.innerHTML = '启动选中 (<span id="selectedCount">0</span>)';
   const statusSnapshot = profileState.getSnapshot();
@@ -841,6 +869,7 @@ document.getElementById('launchSelectedBtn').addEventListener('click', async () 
     unknownIds: statusSnapshot.unknownIds,
     retryableCloseIds: statusSnapshot.retryableCloseIds,
   });
+  await refreshProfilesAfterSuccessfulLaunch(results);
 
   // Clear selection after launch
   profileState.clearSelection();
@@ -1098,8 +1127,14 @@ document.getElementById('viewGridBtn')?.addEventListener('click', () => setViewM
 
 // Load view mode from localStorage (check settings default first)
 function loadViewMode() {
-  const savedMode = localStorage.getItem('viewMode');
-  const defaultMode = localStorage.getItem('defaultViewMode');
+  let savedMode = null;
+  let defaultMode = null;
+  try {
+    savedMode = localStorage.getItem('viewMode');
+    defaultMode = localStorage.getItem('defaultViewMode');
+  } catch {
+    // Storage can be disabled without preventing renderer initialization.
+  }
 
   if (savedMode === 'grid' || savedMode === 'list') {
     currentViewMode = savedMode;
@@ -1114,7 +1149,11 @@ function loadViewMode() {
 // Set view mode
 function setViewMode(mode) {
   currentViewMode = mode;
-  localStorage.setItem('viewMode', mode);
+  try {
+    localStorage.setItem('viewMode', mode);
+  } catch {
+    // Keep the selected view for this session when persistence is unavailable.
+  }
 
   const profilesList = document.getElementById('profilesList');
   const viewListBtn = document.getElementById('viewListBtn');
@@ -1169,8 +1208,12 @@ if (searchInput) {
 // Filter functionality
 document.querySelectorAll('.filter-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.filter-btn').forEach((button) => {
+      button.classList.remove('active');
+      button.setAttribute('aria-pressed', 'false');
+    });
     btn.classList.add('active');
+    btn.setAttribute('aria-pressed', 'true');
     profileState.setFilter(btn.dataset.filter);
     renderProfiles();
   });
@@ -1182,11 +1225,15 @@ document.getElementById('workspaceFilters').addEventListener('click', (event) =>
 });
 
 document.getElementById('launchWorkspaceBtn').addEventListener('click', () => {
-  void runWorkspaceBatch('launch');
+  void runWorkspaceBatch('launch').catch((error) => {
+    showToast(`工作区启动失败：${error?.message || '请求失败'}`, 'error');
+  });
 });
 
 document.getElementById('closeWorkspaceBtn').addEventListener('click', () => {
-  void runWorkspaceBatch('close');
+  void runWorkspaceBatch('close').catch((error) => {
+    showToast(`工作区关闭失败：${error?.message || '请求失败'}`, 'error');
+  });
 });
 
 function closeWorkspaceModal() {
