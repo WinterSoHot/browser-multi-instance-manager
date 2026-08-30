@@ -16,10 +16,7 @@ const {
 } = require("./lib/profile-operation-coordinator");
 const { terminateLaunchedProcessTree } = require("./lib/process-terminator");
 const { readTextFileBounded } = require("./lib/import-reader");
-const {
-  validateProfileId,
-  validateProfileIds,
-} = require("./lib/ipc-validation");
+const { registerIpcHandlers } = require("./lib/ipc-handlers");
 const {
   inspectBrowserProcess,
   inspectBrowserProcesses,
@@ -143,6 +140,64 @@ const profileService = createProfileService({
   writeExportFile: (filePath, content) => fsp.writeFile(filePath, content, "utf8"),
 });
 
+const settingsService = {
+  get() {
+    return store.get("browserSettings", {});
+  },
+  set(settings) {
+    return enqueueSettingsMutation(async () => {
+      try {
+        const validatedSettings = validateBrowserSettings(settings);
+        for (const [browserType, configuredPath] of Object.entries(validatedSettings)) {
+          if (!configuredPath) continue;
+          const executablePath = normalizeBrowserExecutablePath(browserType, configuredPath);
+          if (!(await pathExists(executablePath))) {
+            throw new Error(`${browserType} executable does not exist`);
+          }
+        }
+        store.set("browserSettings", validatedSettings);
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    });
+  },
+  getDefaultPath(browserType) {
+    const defaultPaths = getDefaultBrowserPaths();
+    return defaultPaths[browserType] || "";
+  },
+  getPlatform,
+  async getEnvironment() {
+    const settings = store.get("browserSettings", {});
+    const defaultPaths = getDefaultBrowserPaths();
+    const validity = {};
+    for (const browserType of ["chrome", "firefox", "edge", "zen"]) {
+      const selectedPath = settings[browserType] || defaultPaths[browserType];
+      validity[browserType] = Boolean(
+        selectedPath
+        && await pathExists(normalizeBrowserExecutablePath(browserType, selectedPath)),
+      );
+    }
+    return { platform: getPlatform(), settings, defaultPaths, validity };
+  },
+  async browseFolder(defaultPath) {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ["openFile"],
+      defaultPath: defaultPath || undefined,
+      filters: [
+        { name: "Executables", extensions: ["exe", "app", ""] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: false, path: null };
+    }
+
+    return { success: true, path: result.filePaths[0] };
+  },
+};
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 800,
@@ -158,118 +213,11 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
 }
 
-// IPC Handlers
-ipcMain.handle("get-profiles", () => profileService.list());
-
-ipcMain.handle("add-profile", (event, payload) => profileService.add(payload));
-
-ipcMain.handle("delete-profile", (event, payload) => profileService.remove(payload));
-
-ipcMain.handle("launch-browser", (event, profileId) => profileService.launch(profileId));
-
-ipcMain.handle("close-browser", async (event, profileId) => {
-  return browserProcessManager.close(profileId);
-});
-
-ipcMain.handle("get-browser-status", (event, profileId) => {
-  return browserProcessManager.getStatus(profileId);
-});
-
-ipcMain.handle("get-browser-statuses", (event, profileIds = []) => {
-  return browserProcessManager.getStatuses(validateProfileIds(profileIds));
-});
-
-ipcMain.handle("refresh-browser-status", (event, profileId) => {
-  return browserProcessManager.getStatus(profileId, { force: true });
-});
-
-ipcMain.handle("forget-browser-process", (event, payload = {}) => {
-  const { profileId, acknowledgePossibleRunning = false } = payload;
-  if (typeof acknowledgePossibleRunning !== "boolean") {
-    return { success: false, error: "Invalid process record request" };
-  }
-  try {
-    return browserProcessManager.forget(
-      validateProfileId(profileId),
-      { acknowledgePossibleRunning },
-    );
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle("rename-profile", (event, payload) => profileService.rename(payload));
-
-ipcMain.handle("open-profile-folder", (event, profileId) => profileService.openFolder(profileId));
-
-ipcMain.handle("clone-profile", (event, profileId) => profileService.cloneBlank(profileId));
-
-ipcMain.handle("get-profile-size", (event, profileId) => profileService.size(profileId));
-
-ipcMain.handle("export-profiles", () => profileService.exportMetadata());
-
-ipcMain.handle("import-profiles", () => profileService.importMetadata());
-
-// New IPC handlers for browser settings
-ipcMain.handle("get-browser-settings", () => {
-  return store.get("browserSettings", {});
-});
-
-ipcMain.handle("set-browser-settings", (event, settings) => enqueueSettingsMutation(async () => {
-  try {
-    const validatedSettings = validateBrowserSettings(settings);
-    for (const [browserType, configuredPath] of Object.entries(validatedSettings)) {
-      if (!configuredPath) continue;
-      const executablePath = normalizeBrowserExecutablePath(browserType, configuredPath);
-      if (!(await pathExists(executablePath))) {
-        throw new Error(`${browserType} executable does not exist`);
-      }
-    }
-    store.set("browserSettings", validatedSettings);
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-}));
-
-ipcMain.handle("get-default-browser-path", (event, browserType) => {
-  const defaultPaths = getDefaultBrowserPaths();
-  return defaultPaths[browserType] || "";
-});
-
-ipcMain.handle("get-platform", () => {
-  return getPlatform();
-});
-
-ipcMain.handle("get-browser-environment", async () => {
-  const settings = store.get("browserSettings", {});
-  const defaultPaths = getDefaultBrowserPaths();
-  const validity = {};
-  for (const browserType of ["chrome", "firefox", "edge", "zen"]) {
-    const selectedPath = settings[browserType] || defaultPaths[browserType];
-    validity[browserType] = Boolean(
-      selectedPath
-      && await pathExists(normalizeBrowserExecutablePath(browserType, selectedPath)),
-    );
-  }
-  return { platform: getPlatform(), settings, defaultPaths, validity };
-});
-
-ipcMain.handle("browse-folder", async (event, defaultPath) => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ["openFile"],
-    defaultPath: defaultPath || undefined,
-    filters: [
-      { name: "Executables", extensions: ["exe", "app", ""] },
-      { name: "All Files", extensions: ["*"] },
-    ],
-  });
-
-  if (result.canceled || result.filePaths.length === 0) {
-    return { success: false, path: null };
-  }
-
-  return { success: true, path: result.filePaths[0] };
+const unregisterIpcHandlers = registerIpcHandlers({
+  ipcMain,
+  profileService,
+  browserProcessManager,
+  settingsService,
 });
 
 const initializationPromise = app.whenReady().then(async () => {
