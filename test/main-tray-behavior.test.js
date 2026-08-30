@@ -3,7 +3,11 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const Module = require('node:module');
 const path = require('node:path');
-const { sanitizeUpdateResult } = require('../lib/update-checker');
+const { pathToFileURL } = require('node:url');
+const { parseSemver, sanitizeUpdateResult } = require('../lib/update-checker');
+
+const homePageUrl = pathToFileURL(path.join(__dirname, '..', 'renderer', 'index.html')).href;
+const settingsPageUrl = pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href;
 
 function waitForMainTurn() {
   return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
@@ -12,6 +16,15 @@ function waitForMainTurn() {
 function deferred() {
   let resolve;
   return { promise: new Promise((next) => { resolve = next; }), resolve };
+}
+
+function homeReadyEvent(window, frame = window.webContents.mainFrame) {
+  return { sender: window.webContents, senderFrame: frame };
+}
+
+function navigate(window, url, isMainFrame = true) {
+  if (isMainFrame) window.webContents.mainFrame = { url };
+  window.webContents.emit('did-start-navigation', {}, url, false, isMainFrame);
 }
 
 async function loadMain({
@@ -47,6 +60,7 @@ async function loadMain({
       windows.push(this);
       this.webContents = new EventEmitter();
       this.webContents.send = (channel, payload) => sent.push({ channel, payload });
+      this.webContents.mainFrame = { url: homePageUrl };
     }
 
     loadFile() {}
@@ -184,6 +198,7 @@ async function loadMain({
             return Promise.resolve(updateResult);
           },
         }),
+        parseSemver,
         sanitizeUpdateResult,
       };
     }
@@ -279,7 +294,7 @@ test('main starts one automatic check after first did-finish-load and sends a na
   const harness = await loadMain({
     updateResult: { status: 'available', version: '1.4.0', releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0' },
   });
-  await harness.ipcHandlers.get('update-page-ready')({ sender: harness.windows[0].webContents });
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(harness.windows[0]));
   harness.windows[0].webContents.emit('did-finish-load');
   await waitForMainTurn();
   harness.windows[0].webContents.emit('did-finish-load');
@@ -313,7 +328,7 @@ test('main turns malformed or stale automatic results into a stable error event'
   const harness = await loadMain({
     updateResult: { status: 'available', version: '1.3.1', releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.3.1' },
   });
-  await harness.ipcHandlers.get('update-page-ready')({ sender: harness.windows[0].webContents });
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(harness.windows[0]));
   harness.windows[0].webContents.emit('did-finish-load');
   await waitForMainTurn();
 
@@ -333,14 +348,15 @@ test('a delayed automatic result is replayed only after returning from settings 
   const harness = await loadMain({ updateResult: pending.promise });
   const window = harness.windows[0];
 
-  await harness.ipcHandlers.get('update-page-ready')({ sender: window.webContents });
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window));
   window.webContents.emit('did-finish-load');
-  window.webContents.emit('did-start-navigation');
+  navigate(window, settingsPageUrl);
   pending.resolve(result);
   await waitForMainTurn();
   assert.deepEqual(harness.sent, []);
 
-  await harness.ipcHandlers.get('update-page-ready')({ sender: window.webContents });
+  navigate(window, homePageUrl);
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window));
   assert.deepEqual(harness.sent, [{ channel: 'update-check-result', payload: result }]);
 });
 
@@ -356,9 +372,73 @@ test('a recreated ready home page receives an automatic result that resolves aft
   await waitForMainTurn();
   const second = harness.windows[0];
 
-  await harness.ipcHandlers.get('update-page-ready')({ sender: second.webContents });
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(second));
   pending.resolve(result);
   await waitForMainTurn();
   assert.deepEqual(harness.updateChecks, [{ force: false }]);
   assert.deepEqual(harness.sent, [{ channel: 'update-check-result', payload: result }]);
+});
+
+test('dismissed automatic version stays hidden across settings navigation and window recreation', async () => {
+  const result = {
+    status: 'available',
+    version: '1.4.0',
+    releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0',
+  };
+  const harness = await loadMain({ updateResult: result });
+  const first = harness.windows[0];
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(first));
+  first.webContents.emit('did-finish-load');
+  await waitForMainTurn();
+  await harness.ipcHandlers.get('dismiss-update-notice')(homeReadyEvent(first));
+  navigate(first, settingsPageUrl);
+  navigate(first, homePageUrl);
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(first));
+  first.detachWithoutClosedEvent();
+  first.emitClosed();
+  harness.app.emit('activate');
+  await waitForMainTurn();
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(harness.windows[0]));
+
+  assert.deepEqual(harness.sent, [{ channel: 'update-check-result', payload: result }]);
+});
+
+test('only the current trusted home main frame can mark the update page ready', async () => {
+  const pending = deferred();
+  const result = { status: 'current' };
+  const harness = await loadMain({ updateResult: pending.promise });
+  const window = harness.windows[0];
+  const oldHomeFrame = window.webContents.mainFrame;
+  window.webContents.emit('did-finish-load');
+  navigate(window, settingsPageUrl);
+  assert.deepEqual(
+    await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window)),
+    { success: false },
+  );
+  assert.deepEqual(
+    await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window, oldHomeFrame)),
+    { success: false },
+  );
+  pending.resolve(result);
+  await waitForMainTurn();
+  assert.deepEqual(harness.sent, []);
+  navigate(window, homePageUrl);
+  assert.deepEqual(
+    await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window)),
+    { success: true },
+  );
+  assert.deepEqual(harness.sent, [{ channel: 'update-check-result', payload: result }]);
+});
+
+test('a subframe navigation does not clear a ready home update context', async () => {
+  const pending = deferred();
+  const harness = await loadMain({ updateResult: pending.promise });
+  const window = harness.windows[0];
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window));
+  window.webContents.emit('did-finish-load');
+  navigate(window, 'file:///untrusted-frame.html', false);
+  pending.resolve({ status: 'current' });
+  await waitForMainTurn();
+
+  assert.deepEqual(harness.sent, [{ channel: 'update-check-result', payload: { status: 'current' } }]);
 });

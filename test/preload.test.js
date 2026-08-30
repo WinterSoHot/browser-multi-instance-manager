@@ -121,6 +121,7 @@ test('preload exposes narrow update APIs, constructs force payloads, and dispose
   await browserApi.checkForUpdates(true);
   await browserApi.openReleasePage('https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0');
   await browserApi.markUpdatePageReady();
+  await browserApi.dismissUpdateNotice();
   const dispose = browserApi.onUpdateCheckResult((result) => received.push(result));
   listeners.get('update-check-result')({}, { status: 'current' });
   dispose();
@@ -131,6 +132,7 @@ test('preload exposes narrow update APIs, constructs force payloads, and dispose
     { channel: 'check-for-updates', args: [{ force: true }] },
     { channel: 'open-release-page', args: ['https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0'] },
     { channel: 'update-page-ready', args: [] },
+    { channel: 'dismiss-update-notice', args: [] },
   ]);
   assert.deepEqual(received, [{ status: 'current' }]);
   assert.equal(listeners.has('update-check-result'), false);

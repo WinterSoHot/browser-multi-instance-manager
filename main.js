@@ -9,6 +9,7 @@ const {
   nativeImage,
 } = require("electron");
 const path = require("path");
+const { pathToFileURL } = require("url");
 const fs = require("fs");
 const { randomUUID } = require("crypto");
 const fsp = fs.promises;
@@ -40,7 +41,11 @@ const { createWindowAfterInitialization } = require("./lib/window-lifecycle");
 const { createAppLifecycle } = require("./lib/app-lifecycle");
 const { createTrayManager } = require("./lib/tray-manager");
 const { createGithubReleaseClient } = require("./lib/github-release-client");
-const { createUpdateChecker, sanitizeUpdateResult } = require("./lib/update-checker");
+const {
+  createUpdateChecker,
+  parseSemver,
+  sanitizeUpdateResult,
+} = require("./lib/update-checker");
 const {
   filterRestorableProcessRecords,
   resolveProfilePath,
@@ -66,8 +71,11 @@ let mainWindow;
 let trayManager;
 let automaticUpdateCheckStarted = false;
 let latestAutomaticUpdateResult = null;
-let updateHomeWebContents = null;
+let dismissedAutomaticUpdateVersion = null;
+let updateHomeContext = null;
+let updateHomeNavigationGeneration = 0;
 const currentAppVersion = typeof app.getVersion === "function" ? app.getVersion() : "0.0.0";
+const homePageUrl = pathToFileURL(path.join(__dirname, "renderer", "index.html")).href;
 const updateChecker = createUpdateChecker({
   currentVersion: currentAppVersion,
   requestLatestRelease: createGithubReleaseClient(),
@@ -82,19 +90,55 @@ function isCurrentHomeWebContents(webContents) {
     && mainWindow.webContents === webContents && webContents && !webContents.isDestroyed?.());
 }
 
+function isCurrentHomeFrame(event) {
+  const webContents = event?.sender;
+  const frame = event?.senderFrame;
+  return isCurrentHomeWebContents(webContents)
+    && webContents.mainFrame === frame
+    && frame?.url === homePageUrl;
+}
+
+function getAvailableUpdateVersion(result) {
+  const update = result?.status === "cached" ? result.result : result;
+  if (update?.status !== "available" || !parseSemver(update.version)) return null;
+  return update.version;
+}
+
+function isDismissedAutomaticUpdate(result) {
+  const version = getAvailableUpdateVersion(result);
+  return Boolean(version && dismissedAutomaticUpdateVersion === version);
+}
+
 function replayAutomaticUpdateResult() {
-  if (!latestAutomaticUpdateResult || !isCurrentHomeWebContents(updateHomeWebContents)) return;
+  if (!latestAutomaticUpdateResult || isDismissedAutomaticUpdate(latestAutomaticUpdateResult)) return;
+  const context = updateHomeContext;
+  if (!context || context.generation !== updateHomeNavigationGeneration
+    || !isCurrentHomeWebContents(context.webContents)
+    || context.webContents.mainFrame !== context.frame
+    || context.frame?.url !== homePageUrl) return;
   try {
-    updateHomeWebContents.send("update-check-result", latestAutomaticUpdateResult);
+    context.webContents.send("update-check-result", latestAutomaticUpdateResult);
   } catch {
-    updateHomeWebContents = null;
+    updateHomeContext = null;
   }
 }
 
 ipcMain.handle("update-page-ready", (event) => {
-  if (!isCurrentHomeWebContents(event.sender)) return { success: false };
-  updateHomeWebContents = event.sender;
+  if (!isCurrentHomeFrame(event)) return { success: false };
+  updateHomeContext = {
+    webContents: event.sender,
+    frame: event.senderFrame,
+    generation: updateHomeNavigationGeneration,
+  };
   replayAutomaticUpdateResult();
+  return { success: true };
+});
+
+ipcMain.handle("dismiss-update-notice", (event) => {
+  if (!isCurrentHomeFrame(event)) return { success: false };
+  const version = getAvailableUpdateVersion(latestAutomaticUpdateResult);
+  if (!version) return { success: false };
+  dismissedAutomaticUpdateVersion = version;
   return { success: true };
 });
 const browserProcessManager = new BrowserProcessManager({
@@ -249,14 +293,16 @@ function createWindow() {
       }).catch(() => {});
     });
   }
-  window.webContents.on?.("did-start-navigation", () => {
-    if (updateHomeWebContents === window.webContents) updateHomeWebContents = null;
+  window.webContents.on?.("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
+    if (isMainFrame !== true) return;
+    updateHomeNavigationGeneration += 1;
+    if (updateHomeContext?.webContents === window.webContents) updateHomeContext = null;
   });
   window.on("close", (event) => {
     void appLifecycle.handleWindowClose(event);
   });
   window.on("closed", () => {
-    if (updateHomeWebContents === window.webContents) updateHomeWebContents = null;
+    if (updateHomeContext?.webContents === window.webContents) updateHomeContext = null;
     if (mainWindow === window) mainWindow = undefined;
   });
   return window;

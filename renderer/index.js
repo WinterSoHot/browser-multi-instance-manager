@@ -1746,6 +1746,7 @@ window.browserAPI.onUpdateCheckResult((result) => {
 void window.browserAPI.markUpdatePageReady().catch(() => {});
 document.getElementById('dismissUpdateNotice').addEventListener('click', () => {
   homeUpdateController.dismiss();
+  void window.browserAPI.dismissUpdateNotice().catch(() => {});
 });
 document.getElementById('openUpdateRelease').addEventListener('click', async () => {
   const result = await homeUpdateController.openAvailable();
