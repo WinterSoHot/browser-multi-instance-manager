@@ -1,20 +1,28 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const fsp = fs.promises;
 const Store = require("electron-store");
-const { normalizeBrowserExecutablePath } = require("./lib/browser-paths");
+const {
+  normalizeBrowserExecutablePath,
+  resolveInstalledBrowserPath,
+} = require("./lib/browser-paths");
 const { BrowserProcessManager } = require("./lib/browser-process-manager");
 const {
   inspectBrowserProcess,
+  inspectBrowserProcesses,
 } = require("./lib/process-inspector");
 const { createWindowAfterInitialization } = require("./lib/window-lifecycle");
 const {
-  areProfileNamesEqual,
+  createCloneProfileName,
+  createProfileExport,
   createProfileRecord,
   filterRestorableProcessRecords,
+  isDuplicateProfileName,
   isStoredProfilePathSafe,
   resolveProfilePath,
   validateBrowserSettings,
+  validateProfileImportDocument,
   validateProfileInput,
 } = require("./lib/profile-utils");
 
@@ -31,8 +39,12 @@ const store = new Store({
 let mainWindow;
 const browserProcessManager = new BrowserProcessManager({
   verifyProcess: inspectBrowserProcess,
+  verifyProcesses: inspectBrowserProcesses,
   onStateChange(records) {
     store.set("runningBrowserProcesses", records);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("browser-statuses-changed");
+    }
   },
 });
 
@@ -43,33 +55,12 @@ function getPlatform() {
 
 // Get default browser paths based on platform
 function getDefaultBrowserPaths() {
-  const isMac = process.platform === "darwin";
-  const isWin = process.platform === "win32";
-
-  const paths = {
-    chrome: isMac
-      ? "/Applications/Google Chrome.app"
-      : isWin
-        ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-        : "",
-    firefox: isMac
-      ? "/Applications/Firefox.app"
-      : isWin
-        ? "C:\\Program Files\\Mozilla Firefox\\firefox.exe"
-        : "",
-    edge: isMac
-      ? "/Applications/Microsoft Edge.app"
-      : isWin
-        ? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
-        : "",
-    zen: isMac
-      ? "/Applications/Zen.app"
-      : isWin
-        ? "C:\\Program Files\\Zen Browser\\zen.exe"
-        : "",
-  };
-
-  return paths;
+  return Object.fromEntries(
+    ["chrome", "firefox", "edge", "zen"].map((browserType) => [
+      browserType,
+      resolveInstalledBrowserPath(browserType),
+    ]),
+  );
 }
 
 // Get browser executable path based on platform and browser type
@@ -87,59 +78,42 @@ function getBrowserExecutable(browserType) {
     }
   }
 
-  // Use default paths
-  const isMac = process.platform === "darwin";
-  const isWin = process.platform === "win32";
-
-  const defaultExecutables = {
-    chrome: isMac
-      ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-      : isWin
-        ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-        : "",
-    firefox: isMac
-      ? "/Applications/Firefox.app/Contents/MacOS/firefox"
-      : isWin
-        ? "C:\\Program Files\\Mozilla Firefox\\firefox.exe"
-        : "",
-    edge: isMac
-      ? "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
-      : isWin
-        ? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
-        : "",
-    zen: isMac
-      ? "/Applications/Zen.app/Contents/MacOS/zen"
-      : isWin
-        ? "C:\\Program Files\\Zen Browser\\zen.exe"
-        : "",
-  };
-
-  return defaultExecutables[browserType] || null;
+  const detectedPath = resolveInstalledBrowserPath(browserType);
+  return detectedPath
+    ? normalizeBrowserExecutablePath(browserType, detectedPath)
+    : null;
 }
 
 function getProfilesDir() {
-  const profilesDir = path.join(app.getPath("userData"), "profiles");
-  if (!fs.existsSync(profilesDir)) {
-    fs.mkdirSync(profilesDir, { recursive: true });
-  }
-  return profilesDir;
+  return path.join(app.getPath("userData"), "profiles");
 }
 
 // Create profile directory
-function createProfileDir(browserType, profileName) {
+async function createProfileDir(browserType, profileName) {
   const profilesDir = getProfilesDir();
-  const browserDir = path.join(profilesDir, browserType);
   const profileDir = resolveProfilePath(profilesDir, browserType, profileName);
-
-  if (!fs.existsSync(browserDir)) {
-    fs.mkdirSync(browserDir, { recursive: true });
-  }
-
-  if (!fs.existsSync(profileDir)) {
-    fs.mkdirSync(profileDir, { recursive: true });
-  }
-
+  await fsp.mkdir(profileDir, { recursive: true });
   return profileDir;
+}
+
+async function pathExists(targetPath) {
+  try {
+    await fsp.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function getDirectorySize(directoryPath) {
+  let total = 0;
+  const entries = await fsp.readdir(directoryPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(directoryPath, entry.name);
+    if (entry.isDirectory()) total += await getDirectorySize(entryPath);
+    else if (entry.isFile()) total += (await fsp.stat(entryPath)).size;
+  }
+  return total;
 }
 
 function createWindow() {
@@ -162,7 +136,7 @@ ipcMain.handle("get-profiles", () => {
   return store.get("profiles", []);
 });
 
-ipcMain.handle("add-profile", (event, payload = {}) => {
+ipcMain.handle("add-profile", async (event, payload = {}) => {
   const { browserType, profileName } = payload;
   try {
     validateProfileInput(browserType, profileName);
@@ -172,11 +146,11 @@ ipcMain.handle("add-profile", (event, payload = {}) => {
 
   const profiles = store.get("profiles", []);
   // Check if profile name already exists
-  if (profiles.some((p) => areProfileNamesEqual(p.name, profileName))) {
+  if (isDuplicateProfileName(profiles, browserType, profileName)) {
     return { success: false, error: "Profile name already exists" };
   }
 
-  const profilePath = createProfileDir(browserType, profileName);
+  const profilePath = await createProfileDir(browserType, profileName);
 
   const newProfile = createProfileRecord({
     browserType,
@@ -190,14 +164,25 @@ ipcMain.handle("add-profile", (event, payload = {}) => {
   return { success: true, profile: newProfile };
 });
 
-ipcMain.handle("delete-profile", async (event, profileId) => {
+ipcMain.handle("delete-profile", async (event, payload) => {
+  const { profileId, trashData = false } = typeof payload === "string"
+    ? { profileId: payload }
+    : (payload || {});
   const profiles = store.get("profiles", []);
-  if (!profiles.some((profile) => profile.id === profileId)) {
+  const profile = profiles.find((candidate) => candidate.id === profileId);
+  if (!profile) {
     return { success: false, error: "Profile not found" };
   }
   const { running } = await browserProcessManager.getStatus(profileId, { force: true });
   if (running) {
     return { success: false, error: "Close the browser before removing its profile" };
+  }
+
+  if (trashData) {
+    if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
+      return { success: false, error: "Profile path is invalid" };
+    }
+    if (await pathExists(profile.path)) await shell.trashItem(profile.path);
   }
 
   const filteredProfiles = profiles.filter((p) => p.id !== profileId);
@@ -218,7 +203,7 @@ ipcMain.handle("launch-browser", async (event, profileId) => {
   }
 
   const executablePath = getBrowserExecutable(profile.browserType);
-  if (!executablePath || !fs.existsSync(executablePath)) {
+  if (!executablePath || !(await pathExists(executablePath))) {
     return {
       success: false,
       error: `${profile.browserType} not found at ${executablePath}`,
@@ -241,6 +226,18 @@ ipcMain.handle("get-browser-status", (event, profileId) => {
   return browserProcessManager.getStatus(profileId);
 });
 
+ipcMain.handle("get-browser-statuses", (event, profileIds = []) => {
+  return browserProcessManager.getStatuses(profileIds);
+});
+
+ipcMain.handle("refresh-browser-status", (event, profileId) => {
+  return browserProcessManager.getStatus(profileId, { force: true });
+});
+
+ipcMain.handle("forget-browser-process", (event, profileId) => {
+  return browserProcessManager.forget(profileId);
+});
+
 ipcMain.handle("rename-profile", async (event, payload = {}) => {
   const { profileId, newName } = payload;
   const profiles = store.get("profiles", []);
@@ -261,7 +258,7 @@ ipcMain.handle("rename-profile", async (event, payload = {}) => {
   }
 
   // Check if new name already exists after validating the payload.
-  if (profiles.some((p) => p.id !== profileId && areProfileNamesEqual(p.name, newName))) {
+  if (isDuplicateProfileName(profiles, profile.browserType, newName, profileId)) {
     return { success: false, error: "Profile name already exists" };
   }
 
@@ -273,9 +270,9 @@ ipcMain.handle("rename-profile", async (event, payload = {}) => {
   const newPath = resolveProfilePath(getProfilesDir(), profile.browserType, newName);
 
   // Rename directory on filesystem
-  if (fs.existsSync(oldPath)) {
+  if (await pathExists(oldPath)) {
     try {
-      fs.renameSync(oldPath, newPath);
+      await fsp.rename(oldPath, newPath);
     } catch (error) {
       return {
         success: false,
@@ -303,7 +300,7 @@ ipcMain.handle("open-profile-folder", async (event, profileId) => {
     return { success: false, error: "Profile path is invalid" };
   }
 
-  if (!fs.existsSync(profile.path)) {
+  if (!(await pathExists(profile.path))) {
     return { success: false, error: "Profile folder not found" };
   }
 
@@ -314,14 +311,99 @@ ipcMain.handle("open-profile-folder", async (event, profileId) => {
   return { success: true };
 });
 
+ipcMain.handle("clone-profile", async (event, profileId) => {
+  const profiles = store.get("profiles", []);
+  const source = profiles.find((profile) => profile.id === profileId);
+  if (!source) return { success: false, error: "Profile not found" };
+
+  const profileName = createCloneProfileName(profiles, source.browserType, source.name);
+  const profilePath = await createProfileDir(source.browserType, profileName);
+  const profile = createProfileRecord({
+    browserType: source.browserType,
+    profileName,
+    profilePath,
+  });
+  profiles.push(profile);
+  store.set("profiles", profiles);
+  return { success: true, profile };
+});
+
+ipcMain.handle("get-profile-size", async (event, profileId) => {
+  const profile = store.get("profiles", []).find((candidate) => candidate.id === profileId);
+  if (!profile) return { success: false, error: "Profile not found" };
+  if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
+    return { success: false, error: "Profile path is invalid" };
+  }
+  if (!(await pathExists(profile.path))) return { success: true, bytes: 0 };
+  try {
+    return { success: true, bytes: await getDirectorySize(profile.path) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("export-profiles", async () => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: "browser-profiles.json",
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (result.canceled || !result.filePath) return { success: false, canceled: true };
+  const document = createProfileExport(store.get("profiles", []));
+  await fsp.writeFile(result.filePath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+  return { success: true, count: document.profiles.length };
+});
+
+ipcMain.handle("import-profiles", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openFile"],
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return { success: false, canceled: true };
+  }
+
+  try {
+    const document = JSON.parse(await fsp.readFile(result.filePaths[0], "utf8"));
+    const importedMetadata = validateProfileImportDocument(document);
+    const profiles = store.get("profiles", []);
+    const imported = [];
+    let skipped = 0;
+    for (const metadata of importedMetadata) {
+      if (isDuplicateProfileName(profiles, metadata.browserType, metadata.name)) {
+        skipped += 1;
+        continue;
+      }
+      const profilePath = await createProfileDir(metadata.browserType, metadata.name);
+      const profile = createProfileRecord({
+        browserType: metadata.browserType,
+        profileName: metadata.name,
+        profilePath,
+      });
+      profiles.push(profile);
+      imported.push(profile);
+    }
+    store.set("profiles", profiles);
+    return { success: true, profiles: imported, skipped };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // New IPC handlers for browser settings
 ipcMain.handle("get-browser-settings", () => {
   return store.get("browserSettings", {});
 });
 
-ipcMain.handle("set-browser-settings", (event, settings) => {
+ipcMain.handle("set-browser-settings", async (event, settings) => {
   try {
     const validatedSettings = validateBrowserSettings(settings);
+    for (const [browserType, configuredPath] of Object.entries(validatedSettings)) {
+      if (!configuredPath) continue;
+      const executablePath = normalizeBrowserExecutablePath(browserType, configuredPath);
+      if (!(await pathExists(executablePath))) {
+        throw new Error(`${browserType} executable does not exist`);
+      }
+    }
     store.set("browserSettings", validatedSettings);
     return { success: true };
   } catch (error) {
@@ -336,6 +418,20 @@ ipcMain.handle("get-default-browser-path", (event, browserType) => {
 
 ipcMain.handle("get-platform", () => {
   return getPlatform();
+});
+
+ipcMain.handle("get-browser-environment", async () => {
+  const settings = store.get("browserSettings", {});
+  const defaultPaths = getDefaultBrowserPaths();
+  const validity = {};
+  for (const browserType of ["chrome", "firefox", "edge", "zen"]) {
+    const selectedPath = settings[browserType] || defaultPaths[browserType];
+    validity[browserType] = Boolean(
+      selectedPath
+      && await pathExists(normalizeBrowserExecutablePath(browserType, selectedPath)),
+    );
+  }
+  return { platform: getPlatform(), settings, defaultPaths, validity };
 });
 
 ipcMain.handle("browse-folder", async (event, defaultPath) => {
@@ -357,6 +453,7 @@ ipcMain.handle("browse-folder", async (event, defaultPath) => {
 
 const initializationPromise = app.whenReady().then(async () => {
   const profilesDir = getProfilesDir();
+  await fsp.mkdir(profilesDir, { recursive: true });
   const persistedProcesses = filterRestorableProcessRecords(
     profilesDir,
     store.get("profiles", []),

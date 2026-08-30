@@ -356,3 +356,114 @@ test('does not signal a recovered PID after its command no longer matches', asyn
   assert.deepEqual(signals, []);
   assert.deepEqual(snapshots.at(-1), []);
 });
+
+test('returns one status snapshot for all requested profiles', async () => {
+  const manager = new processModule.BrowserProcessManager({
+    async verifyProcess(record) {
+      return record.profileId === 'profile-1' ? 'verified' : 'unavailable';
+    },
+  });
+  await manager.restore?.([
+    persistedRecord,
+    { ...persistedRecord, profileId: 'unknown', pid: 2002 },
+  ]);
+
+  assert.deepEqual(
+    await manager.getStatuses?.(['profile-1', 'unknown', 'closed'], { force: true }),
+    {
+      'profile-1': { running: true },
+      unknown: { running: true, verificationUnavailable: true },
+      closed: { running: false },
+    },
+  );
+});
+
+test('forgets only recovered tracking records without signaling their PID', async () => {
+  const snapshots = [];
+  const signals = [];
+  const manager = new processModule.BrowserProcessManager({
+    async verifyProcess() {
+      return 'unavailable';
+    },
+    onStateChange(records) {
+      snapshots.push(records);
+    },
+    terminateProcess(pid) {
+      signals.push(pid);
+      return true;
+    },
+  });
+  await manager.restore?.([persistedRecord]);
+
+  assert.deepEqual(manager.forget?.('profile-1'), { success: true });
+  assert.deepEqual(signals, []);
+  assert.deepEqual(snapshots.at(-1), []);
+  assert.deepEqual(await manager.getStatus('profile-1'), { running: false });
+});
+
+test('does not forget a browser child that this application launched', async () => {
+  const child = new FakeChild();
+  const manager = new processModule.BrowserProcessManager({
+    spawnProcess() {
+      queueMicrotask(() => child.emit('spawn'));
+      return child;
+    },
+  });
+  await manager.launch({
+    profileId: 'profile-1',
+    browserType: 'chrome',
+    profilePath: '/profiles/work',
+    executablePath: '/Applications/Chrome',
+  });
+
+  assert.deepEqual(
+    manager.forget?.('profile-1'),
+    { success: false, error: 'Close the browser before forgetting its process' },
+  );
+});
+
+test('uses one verifier snapshot for multiple recovered statuses', async () => {
+  let bulkCalls = 0;
+  const manager = new processModule.BrowserProcessManager({
+    async verifyProcess() {
+      return 'verified';
+    },
+    async verifyProcesses(records) {
+      bulkCalls += 1;
+      return Object.fromEntries(records.map((record) => [record.profileId, 'verified']));
+    },
+  });
+  await manager.restore([
+    persistedRecord,
+    { ...persistedRecord, profileId: 'profile-2', pid: 2002 },
+  ]);
+  bulkCalls = 0;
+
+  await manager.getStatuses(['profile-1', 'profile-2'], { force: true });
+  assert.equal(bulkCalls, 1);
+});
+
+test('restores multiple recovered processes from one verifier snapshot', async () => {
+  let singleCalls = 0;
+  let bulkCalls = 0;
+  const manager = new processModule.BrowserProcessManager({
+    async verifyProcess() {
+      singleCalls += 1;
+      return 'verified';
+    },
+    async verifyProcesses(records) {
+      bulkCalls += 1;
+      return {
+        [records[0].profileId]: 'verified',
+        [records[1].profileId]: 'mismatch',
+      };
+    },
+  });
+
+  assert.deepEqual(await manager.restore([
+    persistedRecord,
+    { ...persistedRecord, profileId: 'stale', pid: 2002 },
+  ]), ['profile-1']);
+  assert.equal(bulkCalls, 1);
+  assert.equal(singleCalls, 0);
+});

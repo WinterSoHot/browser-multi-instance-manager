@@ -814,9 +814,24 @@ section:hover {
 .profile-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   flex-shrink: 0;
   opacity: 0.7;
   transition: opacity var(--transition);
+}
+
+.profile-status-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-unknown {
+  color: var(--warning-color, #b7791f);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .profile-card:hover .profile-actions {
@@ -1081,6 +1096,19 @@ section:hover {
   flex-direction: column;
   gap: 16px;
   margin-bottom: 24px;
+}
+
+.path-status {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.path-status.valid {
+  color: var(--success-color, #2f855a);
+}
+
+.path-status.invalid {
+  color: var(--danger-color, #c53030);
 }
 
 .browser-setting-item {

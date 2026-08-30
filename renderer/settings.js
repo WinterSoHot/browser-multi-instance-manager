@@ -12,21 +12,18 @@ const browserNames = {
 let customSettings = {};
 let defaultPaths = {};
 let currentPlatform = '';
+let browserValidity = {};
 
 // Load settings on startup
 async function loadSettings() {
-  // Get platform info
-  currentPlatform = await window.browserAPI.getPlatform();
+  const environment = await window.browserAPI.getBrowserEnvironment();
+  currentPlatform = environment.platform;
   const platformText = currentPlatform === 'win32' ? 'Windows' : (currentPlatform === 'darwin' ? 'macOS' : currentPlatform);
   document.getElementById('platformInfo').textContent = `当前平台: ${platformText}`;
 
-  // Load custom settings
-  customSettings = await window.browserAPI.getBrowserSettings();
-
-  // Load default paths for each browser
-  for (const browserType of Object.keys(browserNames)) {
-    defaultPaths[browserType] = await window.browserAPI.getDefaultBrowserPath(browserType);
-  }
+  customSettings = environment.settings;
+  defaultPaths = environment.defaultPaths;
+  browserValidity = environment.validity;
 
   // Load default view mode
   const savedViewMode = localStorage.getItem('defaultViewMode');
@@ -62,7 +59,8 @@ function renderBrowserSettings() {
                    data-browser-type="${browserType}">
             <button class="btn btn-secondary btn-small browse-btn" data-browser-type="${browserType}">浏览</button>
           </div>
-          ${defaultPath ? `<div class="default-path">默认路径: ${escapeHtml(defaultPath)}</div>` : ''}
+          ${defaultPath ? `<div class="default-path">自动检测: ${escapeHtml(defaultPath)}</div>` : '<div class="path-status invalid">未自动检测到安装位置</div>'}
+          <div class="path-status ${browserValidity[browserType] ? 'valid' : 'invalid'}">${browserValidity[browserType] ? '路径可用' : '路径不可用'}</div>
         </div>
       </div>
     `;
@@ -114,8 +112,7 @@ document.getElementById('saveSettings').addEventListener('click', async () => {
   localStorage.setItem('defaultViewMode', viewMode);
 
   alert('设置已保存');
-  customSettings = newSettings;
-  renderBrowserSettings();
+  await loadSettings();
 });
 
 // Reset to default
@@ -129,8 +126,7 @@ document.getElementById('resetSettings').addEventListener('click', async () => {
     alert(`重置设置失败：${result.error}`);
     return;
   }
-  customSettings = {};
-  renderBrowserSettings();
+  await loadSettings();
   alert('已重置为默认路径');
 });
 
@@ -140,4 +136,6 @@ document.getElementById('backToHome').addEventListener('click', () => {
 });
 
 // Initialize
-loadSettings();
+void loadSettings().catch((error) => {
+  document.getElementById('browserSettingsList').innerHTML = `<p class="path-status invalid">加载失败：${escapeHtml(error.message)}</p>`;
+});

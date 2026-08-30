@@ -168,3 +168,78 @@ test('creates unique IDs for profiles created in the same instant', () => {
   assert.notEqual(firstProfile?.id, secondProfile?.id);
   assert.equal(firstProfile?.createdAt, input.createdAt);
 });
+
+test('treats profile names as unique within each browser type', () => {
+  const profiles = [
+    { id: 'chrome-work', browserType: 'chrome', name: 'Work' },
+    { id: 'firefox-personal', browserType: 'firefox', name: 'Personal' },
+  ];
+
+  assert.equal(
+    profileUtils.isDuplicateProfileName?.(profiles, 'chrome', 'work'),
+    true,
+  );
+  assert.equal(
+    profileUtils.isDuplicateProfileName?.(profiles, 'firefox', 'work'),
+    false,
+  );
+  assert.equal(
+    profileUtils.isDuplicateProfileName?.(profiles, 'chrome', 'work', 'chrome-work'),
+    false,
+  );
+});
+
+test('chooses a collision-free clone name within the same browser', () => {
+  const profiles = [
+    { browserType: 'chrome', name: 'Work' },
+    { browserType: 'chrome', name: 'Work 副本' },
+    { browserType: 'firefox', name: 'Work 副本 (2)' },
+  ];
+
+  assert.equal(
+    profileUtils.createCloneProfileName?.(profiles, 'chrome', 'Work'),
+    'Work 副本 (2)',
+  );
+});
+
+test('keeps generated clone names within the profile-name length limit', () => {
+  const generatedName = profileUtils.createCloneProfileName?.(
+    [],
+    'chrome',
+    '一'.repeat(80),
+  );
+
+  assert.ok(generatedName.length <= 80);
+  assert.doesNotThrow(() => profileUtils.validateProfileInput('chrome', generatedName));
+});
+
+test('exports and imports metadata without profile paths or credentials', () => {
+  const document = profileUtils.createProfileExport?.([
+    {
+      id: 'secret-id',
+      browserType: 'chrome',
+      name: 'Work',
+      path: '/private/profile',
+      cookies: ['secret'],
+    },
+  ]);
+
+  assert.deepEqual(document, {
+    version: 1,
+    profiles: [{ browserType: 'chrome', name: 'Work' }],
+  });
+  assert.deepEqual(
+    profileUtils.validateProfileImportDocument?.(document),
+    [{ browserType: 'chrome', name: 'Work' }],
+  );
+  assert.throws(
+    () => profileUtils.validateProfileImportDocument?.({
+      version: 1,
+      profiles: [
+        { browserType: 'chrome', name: 'Work' },
+        { browserType: 'chrome', name: 'work' },
+      ],
+    }),
+    /Duplicate profile metadata/,
+  );
+});

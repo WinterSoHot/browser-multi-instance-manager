@@ -222,3 +222,44 @@ test('distinguishes a missing process from an unavailable inspection', async () 
     'verified',
   );
 });
+
+test('verifies multiple recovered processes from one shared detail snapshot', async () => {
+  let snapshotCalls = 0;
+  const records = [
+    {
+      profileId: 'work',
+      browserType: 'chrome',
+      profilePath: '/profiles/work',
+      executablePath: '/Applications/Chrome',
+      pid: 100,
+    },
+    {
+      profileId: 'personal',
+      browserType: 'firefox',
+      profilePath: '/profiles/personal',
+      executablePath: '/Applications/Firefox',
+      pid: 200,
+    },
+  ];
+
+  assert.deepEqual(
+    await processInspector.inspectBrowserProcesses?.(records, {
+      platform: 'darwin',
+      async getDetailsBatch() {
+        snapshotCalls += 1;
+        return new Map([
+          [100, {
+            executablePath: '/Applications/Chrome',
+            commandLine: '/Applications/Chrome --user-data-dir=/profiles/work',
+          }],
+          [200, {
+            executablePath: '/Applications/Firefox',
+            commandLine: '/Applications/Firefox -profile /wrong',
+          }],
+        ]);
+      },
+    }),
+    { work: 'verified', personal: 'mismatch' },
+  );
+  assert.equal(snapshotCalls, 1);
+});

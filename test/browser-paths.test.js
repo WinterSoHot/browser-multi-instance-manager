@@ -50,3 +50,50 @@ test('leaves direct executable paths unchanged', () => {
     '/Applications/Zen.app/Contents/MacOS/zen',
   );
 });
+
+test('discovers browsers from macOS application locations in priority order', () => {
+  const candidates = browserPaths.getBrowserPathCandidates?.(
+    'chrome',
+    'darwin',
+    { HOME: '/Users/tester' },
+  );
+
+  assert.deepEqual(candidates, [
+    '/Applications/Google Chrome.app',
+    '/Users/tester/Applications/Google Chrome.app',
+  ]);
+  assert.equal(
+    browserPaths.resolveInstalledBrowserPath?.('chrome', {
+      platform: 'darwin',
+      env: { HOME: '/Users/tester' },
+      exists: (candidate) => candidate.startsWith('/Users/tester'),
+    }),
+    '/Users/tester/Applications/Google Chrome.app',
+  );
+});
+
+test('discovers Windows machine and per-user browser installations', () => {
+  assert.deepEqual(
+    browserPaths.getBrowserPathCandidates?.('edge', 'win32', {
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      LOCALAPPDATA: 'C:\\Users\\tester\\AppData\\Local',
+    }),
+    [
+      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      'C:\\Users\\tester\\AppData\\Local\\Microsoft\\Edge\\Application\\msedge.exe',
+    ],
+  );
+});
+
+test('returns an empty detected path when no candidate exists', () => {
+  assert.equal(
+    browserPaths.resolveInstalledBrowserPath?.('zen', {
+      platform: 'win32',
+      env: {},
+      exists: () => false,
+    }),
+    '',
+  );
+});
