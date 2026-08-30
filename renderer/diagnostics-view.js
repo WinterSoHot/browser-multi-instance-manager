@@ -40,6 +40,28 @@
     return label ? { label, className: `diagnostic-badge ${state}` } : null;
   }
 
+  function createModalFocusManager(getFocusableElements) {
+    function getInitialFocusTarget(container) {
+      return getFocusableElements(container)[0] || null;
+    }
+
+    function getNextFocusTarget({ container, activeElement, shiftKey }) {
+      const focusableElements = getFocusableElements(container);
+      if (focusableElements.length === 0) return null;
+      const currentIndex = focusableElements.indexOf(activeElement);
+      if (currentIndex === -1) {
+        return shiftKey ? focusableElements.at(-1) : focusableElements[0];
+      }
+      if (shiftKey && currentIndex === 0) return focusableElements.at(-1);
+      if (!shiftKey && currentIndex === focusableElements.length - 1) {
+        return focusableElements[0];
+      }
+      return null;
+    }
+
+    return { getInitialFocusTarget, getNextFocusTarget };
+  }
+
   function createDiagnosticsViewState() {
     let requestNumber = 0;
     const latestRequests = new Map();
@@ -78,5 +100,10 @@
     };
   }
 
-  return { createDiagnosticsViewState, getDiagnosticBadge, sanitizeDiagnostic };
+  return {
+    createDiagnosticsViewState,
+    createModalFocusManager,
+    getDiagnosticBadge,
+    sanitizeDiagnostic,
+  };
 }));

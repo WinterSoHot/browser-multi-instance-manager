@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   createDiagnosticsViewState,
+  createModalFocusManager,
   getDiagnosticBadge,
   sanitizeDiagnostic,
 } = require('../renderer/diagnostics-view');
@@ -50,4 +51,15 @@ test('diagnostic view discards stale responses after retry or profile deletion',
   state.remove('profile-2');
   assert.equal(state.accept(deleteRequest, { state: 'healthy', actions: [] }, new Set()), false);
   assert.equal(state.get('profile-2'), null);
+});
+
+test('diagnostic modal focus manager targets the first action and loops at either tab boundary', () => {
+  const retry = { id: 'retry' };
+  const close = { id: 'close' };
+  const manager = createModalFocusManager(() => [retry, close]);
+
+  assert.equal(manager.getInitialFocusTarget({}), retry);
+  assert.equal(manager.getNextFocusTarget({ container: {}, activeElement: close, shiftKey: false }), retry);
+  assert.equal(manager.getNextFocusTarget({ container: {}, activeElement: retry, shiftKey: true }), close);
+  assert.equal(manager.getNextFocusTarget({ container: {}, activeElement: {}, shiftKey: false }), retry);
 });

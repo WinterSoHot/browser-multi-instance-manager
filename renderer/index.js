@@ -25,6 +25,7 @@ const {
 } = window.ImportPreview;
 const {
   createDiagnosticsViewState,
+  createModalFocusManager,
   getDiagnosticBadge,
 } = window.diagnosticsView;
 
@@ -39,6 +40,11 @@ let workspaces = [];
 const importPreviewState = createImportPreviewState();
 const diagnosticsViewState = createDiagnosticsViewState();
 let diagnosticsModalProfileId = null;
+let diagnosticsModalTrigger = null;
+const diagnosticsFocusManager = createModalFocusManager((container) => (
+  Array.from(container.querySelectorAll('[data-diagnostic-action], #closeDiagnostics'))
+    .filter((element) => !element.disabled)
+));
 
 const diagnosticMessages = {
   'process-unknown': '无法确认该配置关联的浏览器进程。请重新检测后再进行目录操作。',
@@ -519,15 +525,59 @@ document.getElementById('profilesList').addEventListener('click', (event) => {
   };
   const action = actions[button.dataset.profileAction];
   if (action) {
-    void Promise.resolve(action(profileId)).catch((error) => {
+    void Promise.resolve(action(profileId, button)).catch((error) => {
       showToast(`操作失败：${error.message}`, 'error');
     });
   }
 });
 
+function findDiagnosticsBadge(profileId) {
+  return Array.from(document.querySelectorAll('[data-profile-action="open-diagnostics"]'))
+    .find((button) => button.dataset.profileId === profileId) || null;
+}
+
+function restoreDiagnosticsFocus() {
+  const profileId = diagnosticsModalProfileId;
+  const fallback = findDiagnosticsBadge(profileId) || document.getElementById('openAddModal');
+  const target = diagnosticsModalTrigger?.isConnected ? diagnosticsModalTrigger : fallback;
+  diagnosticsModalTrigger = null;
+  if (target && typeof target.focus === 'function') target.focus();
+}
+
 function closeDiagnosticsModal() {
   document.getElementById('diagnosticsModal').classList.remove('show');
+  restoreDiagnosticsFocus();
   diagnosticsModalProfileId = null;
+}
+
+function focusDiagnosticsModal() {
+  const modal = document.getElementById('diagnosticsModal');
+  const target = diagnosticsFocusManager.getInitialFocusTarget(modal);
+  if (target && typeof target.focus === 'function') target.focus();
+}
+
+function trapDiagnosticsModalFocus(event) {
+  const modal = document.getElementById('diagnosticsModal');
+  if (!modal.classList.contains('show')) return false;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeDiagnosticsModal();
+    return true;
+  }
+  if (event.key === 'Tab') {
+    const target = diagnosticsFocusManager.getNextFocusTarget({
+      container: modal,
+      activeElement: document.activeElement,
+      shiftKey: event.shiftKey,
+    });
+    if (target) {
+      event.preventDefault();
+      target.focus();
+    }
+  }
+  event.stopImmediatePropagation();
+  return true;
 }
 
 function renderDiagnosticsModal(profileId) {
@@ -566,14 +616,16 @@ function renderDiagnosticsModal(profileId) {
   }
 }
 
-async function openDiagnostics(profileId) {
+async function openDiagnostics(profileId, trigger) {
   if (!profileState.getSnapshot().profiles.some((profile) => profile.id === profileId)) return;
   diagnosticsModalProfileId = profileId;
+  diagnosticsModalTrigger = trigger || findDiagnosticsBadge(profileId);
   await requestDiagnostics(profileId);
   if (diagnosticsModalProfileId !== profileId) return;
   renderProfiles();
   renderDiagnosticsModal(profileId);
   document.getElementById('diagnosticsModal').classList.add('show');
+  focusDiagnosticsModal();
 }
 
 async function performDiagnosticAction(action) {
@@ -613,6 +665,7 @@ document.getElementById('diagnosticsModal').addEventListener('click', (event) =>
     .finally(() => { button.disabled = false; });
 });
 document.getElementById('closeDiagnostics').addEventListener('click', closeDiagnosticsModal);
+document.addEventListener('keydown', trapDiagnosticsModalFocus, true);
 
 document.getElementById('profilesList').addEventListener('change', (event) => {
   if (event.target.matches('.profile-checkbox')) {
@@ -727,11 +780,12 @@ async function deleteProfile(profileId) {
 
   if (result.success) {
     diagnosticsViewState.remove(profileId);
-    if (diagnosticsModalProfileId === profileId) closeDiagnosticsModal();
+    const closeDiagnosticsForDeletedProfile = diagnosticsModalProfileId === profileId;
     profileState.setProfiles(
       profileState.getSnapshot().profiles.filter(p => p.id !== profileId),
     );
     renderProfiles();
+    if (closeDiagnosticsForDeletedProfile) closeDiagnosticsModal();
     showToast(trashData ? '配置数据已移入系统废纸篓' : '已从列表移除，本地浏览器数据已保留', 'success');
   } else {
     showToast('错误：' + result.error, 'error');

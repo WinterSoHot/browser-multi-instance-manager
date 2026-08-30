@@ -1,20 +1,28 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 
 const { createDiagnosticsService } = require('../lib/diagnostics-service');
 
-function createFixture({
-  profile = {
+const profilesDir = path.join(path.sep, 'app-data', 'profiles');
+const executablePath = path.join(path.sep, 'Applications', 'Google Chrome');
+const profilePath = (name = 'Work') => path.join(profilesDir, 'chrome', name);
+
+function createFixture(options = {}) {
+  const {
+    profile = {
     id: 'profile-1',
     browserType: 'chrome',
     name: 'Work',
-    path: '/app-data/profiles/chrome/Work',
+    path: profilePath(),
   },
-  processStatus = { running: false },
-  browserExists = true,
-  directoryExists = true,
-  createResult = '/app-data/profiles/chrome/Work',
-} = {}) {
+    browserExists = true,
+    directoryExists = true,
+    createResult = profilePath(),
+  } = options;
+  const processStatus = Object.prototype.hasOwnProperty.call(options, 'processStatus')
+    ? options.processStatus
+    : { running: false };
   const calls = {
     createDirectory: [],
     getStatus: [],
@@ -41,14 +49,18 @@ function createFixture({
         return processStatus;
       },
     },
-    getBrowserExecutable: () => '/Applications/Google Chrome',
-    getProfilesDir: () => '/app-data/profiles',
+    getBrowserExecutable: () => executablePath,
+    getProfilesDir: () => profilesDir,
     async pathExists(targetPath) {
       calls.pathExists.push(targetPath);
-      if (targetPath === '/Applications/Google Chrome') return browserExists;
+      if (targetPath === executablePath) return browserExists;
       return directoryExists;
     },
     async createProfileDir(browserType, profileName) {
+      calls.createDirectory.push({ browserType, profileName });
+      return createResult;
+    },
+    async createEmptyProfileDir(browserType, profileName) {
       calls.createDirectory.push({ browserType, profileName });
       return createResult;
     },
@@ -103,6 +115,25 @@ test('healthy inspection has no repair actions', async () => {
   });
 });
 
+test('only a valid explicit stopped status can expose a directory repair action', async () => {
+  for (const processStatus of [null, undefined, {}, { running: 0 }, { running: 'false' }, {
+    running: false,
+    verificationUnavailable: true,
+  }, { running: false, verificationUnavailable: 'false' }]) {
+    const { service, calls } = createFixture({ processStatus, directoryExists: false });
+    assert.deepEqual(await service.inspect('profile-1'), {
+      code: 'PROCESS_STATE_UNKNOWN',
+      state: 'process-unknown',
+      actions: ['retry'],
+    });
+    assert.deepEqual(await service.repairMissingDirectory('profile-1'), {
+      success: false,
+      code: 'PROCESS_STATE_UNKNOWN',
+    });
+    assert.deepEqual(calls.createDirectory, []);
+  }
+});
+
 test('unknown or running process state forbids directory repair after a forced fresh status check', async () => {
   for (const [processStatus, code] of [
     [{ running: true, verificationUnavailable: true }, 'PROCESS_STATE_UNKNOWN'],
@@ -122,7 +153,7 @@ test('repair refuses a profile whose stored path is outside the controlled profi
       id: 'profile-1',
       browserType: 'chrome',
       name: 'Work',
-      path: '/private/untrusted',
+      path: path.join(path.sep, 'private', 'untrusted'),
     },
     directoryExists: false,
   });
@@ -141,7 +172,26 @@ test('repair converts an invalid stored profile name into a stable path code', a
       id: 'profile-1',
       browserType: 'chrome',
       name: 'Work.',
-      path: '/app-data/profiles/chrome/Work.',
+      path: profilePath('Work.'),
+    },
+    directoryExists: false,
+  });
+
+  assert.deepEqual(await service.repairMissingDirectory('profile-1'), {
+    success: false,
+    code: 'PROFILE_PATH_INVALID',
+  });
+  assert.deepEqual(calls.getStatus, []);
+  assert.deepEqual(calls.createDirectory, []);
+});
+
+test('repair rejects a normalized-but-not-exact stored path representation', async () => {
+  const { service, calls } = createFixture({
+    profile: {
+      id: 'profile-1',
+      browserType: 'chrome',
+      name: 'Work',
+      path: `${path.join(profilesDir, 'chrome')}${path.sep}..${path.sep}chrome${path.sep}Work`,
     },
     directoryExists: false,
   });
@@ -162,12 +212,14 @@ test('repair re-reads the profile, checks the missing directory again, and accep
     code: 'DIRECTORY_RECREATED',
   });
   assert.deepEqual(calls.pathExists, [
-    '/app-data/profiles/chrome/Work',
-    '/app-data/profiles/chrome/Work',
+    profilePath(),
   ]);
   assert.deepEqual(calls.createDirectory, [{ browserType: 'chrome', profileName: 'Work' }]);
 
-  const mismatch = createFixture({ directoryExists: false, createResult: '/wrong/path' });
+  const mismatch = createFixture({
+    directoryExists: false,
+    createResult: path.join(path.sep, 'wrong', 'path'),
+  });
   assert.deepEqual(await mismatch.service.repairMissingDirectory('profile-1'), {
     success: false,
     code: 'CREATE_PATH_MISMATCH',
@@ -175,21 +227,90 @@ test('repair re-reads the profile, checks the missing directory again, and accep
   assert.deepEqual(mismatch.calls.createDirectory, [{ browserType: 'chrome', profileName: 'Work' }]);
 });
 
+test('repair reports a stable failure when the directory appears after the pre-check', async () => {
+  const { appStore, calls } = createFixture({ directoryExists: false });
+  const service = createDiagnosticsService({
+    appStore,
+    profileOperations: { runMutation: (_profileId, operation) => operation() },
+    browserProcessManager: { getStatus: async () => ({ running: false }) },
+    getBrowserExecutable: () => executablePath,
+    getProfilesDir: () => profilesDir,
+    pathExists: async () => false,
+    createEmptyProfileDir: async () => {
+      calls.createDirectory.push({ browserType: 'chrome', profileName: 'Work' });
+      const error = new Error('already exists');
+      error.code = 'EEXIST';
+      throw error;
+    },
+  });
+
+  assert.deepEqual(await service.repairMissingDirectory('profile-1'), {
+    success: false,
+    code: 'DIRECTORY_CREATE_FAILED',
+  });
+  assert.deepEqual(calls.createDirectory, [{ browserType: 'chrome', profileName: 'Work' }]);
+});
+
 test('repair returns stable failures without raw filesystem errors', async () => {
   const { service } = createFixture({ directoryExists: false });
   const result = await createDiagnosticsService({
     appStore: { getProfiles: () => [{
-      id: 'profile-1', browserType: 'chrome', name: 'Work', path: '/app-data/profiles/chrome/Work',
+      id: 'profile-1', browserType: 'chrome', name: 'Work', path: profilePath(),
     }] },
     profileOperations: { runMutation: (_profileId, operation) => operation() },
     browserProcessManager: { getStatus: async () => ({ running: false }) },
-    getBrowserExecutable: () => '/Applications/Google Chrome',
-    getProfilesDir: () => '/app-data/profiles',
+    getBrowserExecutable: () => executablePath,
+    getProfilesDir: () => profilesDir,
     pathExists: async () => false,
-    createProfileDir: async () => { throw new Error('/private/secret permission denied'); },
+    createEmptyProfileDir: async () => {
+      throw new Error(`${path.join(path.sep, 'private', 'secret')} permission denied`);
+    },
   }).repairMissingDirectory('profile-1');
 
   assert.deepEqual(result, { success: false, code: 'DIRECTORY_CREATE_FAILED' });
-  assert.equal(JSON.stringify(result).includes('/private/secret'), false);
+  assert.equal(JSON.stringify(result).includes(path.join(path.sep, 'private', 'secret')), false);
   assert.ok(service);
+});
+
+test('service outer boundaries convert store, directory, and coordinator failures into stable results', async () => {
+  const unavailable = {
+    code: 'DIAGNOSTICS_UNAVAILABLE',
+    state: 'process-unknown',
+    actions: ['retry'],
+  };
+  const inspectService = createDiagnosticsService({
+    appStore: { getProfiles: () => { throw path.join(path.sep, 'private', 'store'); } },
+  });
+  assert.deepEqual(await inspectService.inspect('profile-1'), unavailable);
+  assert.deepEqual(await createDiagnosticsService({
+    appStore: { getProfiles: () => { throw new Error('store unavailable'); } },
+    profileOperations: { runMutation: (_profileId, operation) => operation() },
+  }).repairMissingDirectory('profile-1'), {
+    success: false,
+    code: 'DIAGNOSTICS_UNAVAILABLE',
+  });
+
+  const directoryService = createDiagnosticsService({
+    appStore: { getProfiles: () => [{
+      id: 'profile-1', browserType: 'chrome', name: 'Work', path: profilePath(),
+    }] },
+    browserProcessManager: { getStatus: async () => ({ running: false }) },
+    getBrowserExecutable: () => executablePath,
+    getProfilesDir: () => { throw new Error('secret directory'); },
+    pathExists: async () => true,
+    profileOperations: {
+      runMutation: () => Promise.reject({ raw: path.join(path.sep, 'private', 'queue') }),
+    },
+  });
+  assert.deepEqual(await directoryService.inspect('profile-1'), unavailable);
+  assert.deepEqual(await directoryService.repairMissingDirectory('profile-1'), {
+    success: false,
+    code: 'DIAGNOSTICS_UNAVAILABLE',
+  });
+  assert.deepEqual(await createDiagnosticsService({
+    profileOperations: { runMutation: () => { throw 'queue unavailable'; } },
+  }).repairMissingDirectory('profile-1'), {
+    success: false,
+    code: 'DIAGNOSTICS_UNAVAILABLE',
+  });
 });

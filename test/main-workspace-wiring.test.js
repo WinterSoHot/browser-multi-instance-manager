@@ -32,7 +32,7 @@ function loadMainWithFakes() {
     app: {
       whenReady: () => new Promise(() => {}),
       on() {},
-      getPath: () => '/app-data',
+      getPath: () => path.join(path.sep, 'app-data'),
     },
     BrowserWindow: {
       getAllWindows: () => [],
@@ -152,7 +152,7 @@ test('main constructs diagnostics with the shared profile coordinator and inject
 
   assert.equal(serviceOptions.diagnostics.profileOperations, serviceOptions.profile.profileOperations);
   assert.equal(typeof serviceOptions.diagnostics.getProfilesDir, 'function');
-  assert.equal(typeof serviceOptions.diagnostics.createProfileDir, 'function');
+  assert.equal(typeof serviceOptions.diagnostics.createEmptyProfileDir, 'function');
   assert.deepEqual(await handlers.get('inspect-profile-diagnostics')({}, 'profile-1'), {
     code: 'HEALTHY', state: 'healthy', actions: [],
   });

@@ -1,7 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 
 const { registerIpcHandlers } = require('../lib/ipc-handlers');
+
+const privatePath = path.join(path.sep, 'private', 'path');
 
 const expectedChannels = [
   'get-profiles',
@@ -159,11 +162,19 @@ test('diagnostics IPC accepts only a profile ID and never forwards service excep
   );
 
   const failures = createHandlerFixture({
-    diagnosticsService: { inspect: async () => { throw new Error('/private/path'); } },
+    diagnosticsService: { inspect: async () => { throw new Error(privatePath); } },
   });
   assert.deepEqual(
     await failures.handlers.get('inspect-profile-diagnostics')({}, 'profile-1'),
     { code: 'DIAGNOSTICS_UNAVAILABLE', state: 'process-unknown', actions: ['retry'] },
+  );
+
+  const repairFailure = createHandlerFixture({
+    diagnosticsService: { repairMissingDirectory: () => Promise.reject(privatePath) },
+  });
+  assert.deepEqual(
+    await repairFailure.handlers.get('repair-profile-directory')({}, 'profile-1'),
+    { success: false, code: 'DIAGNOSTICS_UNAVAILABLE' },
   );
 });
 
@@ -225,7 +236,7 @@ test('process IPC validates bulk IDs and forwards optional forced snapshots', as
 });
 
 test('settings IPC delegates payloads and forwards environment results', async () => {
-  const settings = { chrome: '/Applications/Google Chrome.app' };
+  const settings = { chrome: path.join(path.sep, 'Applications', 'Google Chrome.app') };
   const environment = {
     platform: 'darwin',
     settings,
@@ -343,7 +354,7 @@ test('workspace IPC returns a safe result when an asynchronous service operation
 });
 
 test('workspace IPC sanitizes null, undefined, and non-Error promise rejections', async () => {
-  for (const rejection of [null, undefined, 'raw system failure', { message: '/private/path' }]) {
+  for (const rejection of [null, undefined, 'raw system failure', { message: privatePath }]) {
     const { handlers } = createHandlerFixture({
       workspaceService: {
         create: () => Promise.reject(rejection),
@@ -382,14 +393,16 @@ test('import IPC accepts only an opaque token and duplicate-row skip or rename d
   }]);
   assert.deepEqual(await handlers.get('execute-import')({}, {
     token: 'a'.repeat(64),
-    decisions: [{ line: 2, action: 'rename', path: '/private' }],
+    decisions: [{ line: 2, action: 'rename', path: path.join(path.sep, 'private') }],
   }), { success: false, code: 'IMPORT_REQUEST_INVALID' });
 });
 
 test('import IPC never forwards a service exception or raw system detail', async () => {
   const { handlers } = createHandlerFixture({
     profileService: {
-      previewImportMetadata: async () => { throw new Error('/private/imports/profiles.json'); },
+      previewImportMetadata: async () => {
+        throw new Error(path.join(path.sep, 'private', 'imports', 'profiles.json'));
+      },
       executeImport: async () => { throw new Error('native failure'); },
     },
   });

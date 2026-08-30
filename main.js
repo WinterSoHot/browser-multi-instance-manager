@@ -74,6 +74,13 @@ async function createProfileDir(browserType, profileName) {
   return profileDir;
 }
 
+async function createEmptyProfileDir(browserType, profileName) {
+  const profileDir = resolveProfilePath(getProfilesDir(), browserType, profileName);
+  await fsp.mkdir(path.dirname(profileDir), { recursive: true });
+  await fsp.mkdir(profileDir);
+  return profileDir;
+}
+
 async function removeEmptyDirectory(directoryPath) {
   await fsp.rmdir(directoryPath);
 }
@@ -152,7 +159,7 @@ const diagnosticsService = createDiagnosticsService({
   getBrowserExecutable: settingsService.getExecutable,
   getProfilesDir,
   pathExists,
-  createProfileDir,
+  createEmptyProfileDir,
 });
 
 function createWindow() {
