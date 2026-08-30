@@ -163,3 +163,27 @@ test('adapter rejects unsupported future schema versions without writing', () =>
   );
   assert.deepEqual(store.getWrites(), []);
 });
+
+test('adapter writes profile and workspace metadata in one snapshot', () => {
+  const currentData = migrateStoreData(legacyData);
+  const store = createStore(currentData);
+  const appStore = createAppStore(store);
+  const profiles = [{
+    ...currentData.profiles[0],
+    workspaceId: 'workspace-1',
+    favorite: true,
+  }];
+  const workspaces = [{
+    id: 'workspace-1',
+    name: 'Work',
+    createdAt: '2026-08-30T00:00:00.000Z',
+  }];
+
+  appStore.setProfilesAndWorkspaces(profiles, workspaces);
+
+  assert.deepEqual(store.getWrites(), [{
+    ...currentData,
+    profiles,
+    workspaces,
+  }]);
+});

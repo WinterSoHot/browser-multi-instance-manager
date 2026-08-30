@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const { randomUUID } = require("crypto");
 const fsp = fs.promises;
 const Store = require("electron-store");
 const {
@@ -12,6 +13,7 @@ const { createAsyncQueue } = require("./lib/async-queue");
 const { createAppStore } = require("./lib/app-store");
 const { createBrowserSettingsService } = require("./lib/browser-settings-service");
 const { createProfileService } = require("./lib/profile-service");
+const { createWorkspaceService } = require("./lib/workspace-service");
 const {
   createProfileOperationCoordinator,
 } = require("./lib/profile-operation-coordinator");
@@ -116,6 +118,13 @@ const profileService = createProfileService({
   writeExportFile: (filePath, content) => fsp.writeFile(filePath, content, "utf8"),
 });
 
+const workspaceService = createWorkspaceService({
+  appStore,
+  profileOperations,
+  randomUUID,
+  now: () => new Date().toISOString(),
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 800,
@@ -136,6 +145,7 @@ const unregisterIpcHandlers = registerIpcHandlers({
   profileService,
   browserProcessManager,
   settingsService,
+  workspaceService,
 });
 
 const initializationPromise = app.whenReady().then(async () => {

@@ -31,5 +31,19 @@ contextBridge.exposeInMainWorld('browserAPI', {
   getDefaultBrowserPath: (browserType) => ipcRenderer.invoke('get-default-browser-path', browserType),
   getPlatform: () => ipcRenderer.invoke('get-platform'),
   getBrowserEnvironment: () => ipcRenderer.invoke('get-browser-environment'),
-  browseFolder: (defaultPath) => ipcRenderer.invoke('browse-folder', defaultPath)
+  browseFolder: (defaultPath) => ipcRenderer.invoke('browse-folder', defaultPath),
+  getWorkspaces: () => ipcRenderer.invoke('get-workspaces'),
+  createWorkspace: (name) => ipcRenderer.invoke('create-workspace', { name }),
+  renameWorkspace: (workspaceId, name) => (
+    ipcRenderer.invoke('rename-workspace', { workspaceId, name })
+  ),
+  deleteWorkspace: (workspaceId) => (
+    ipcRenderer.invoke('delete-workspace', { workspaceId })
+  ),
+  assignProfileWorkspace: (profileId, workspaceId) => (
+    ipcRenderer.invoke('assign-profile-workspace', { profileId, workspaceId })
+  ),
+  setProfileFavorite: (profileId, favorite) => (
+    ipcRenderer.invoke('set-profile-favorite', { profileId, favorite })
+  ),
 });

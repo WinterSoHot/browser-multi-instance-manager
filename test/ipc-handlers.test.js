@@ -25,12 +25,19 @@ const expectedChannels = [
   'get-platform',
   'get-browser-environment',
   'browse-folder',
+  'get-workspaces',
+  'create-workspace',
+  'rename-workspace',
+  'delete-workspace',
+  'assign-profile-workspace',
+  'set-profile-favorite',
 ];
 
 function createHandlerFixture({
   profileService: profileOverrides = {},
   browserProcessManager: processOverrides = {},
   settingsService: settingsOverrides = {},
+  workspaceService: workspaceOverrides = {},
 } = {}) {
   const handlers = new Map();
   const ipcMain = {
@@ -72,6 +79,15 @@ function createHandlerFixture({
       getEnvironment: () => ({}),
       browseFolder: () => {},
       ...settingsOverrides,
+    },
+    workspaceService: {
+      list: () => [],
+      create: () => {},
+      rename: () => {},
+      remove: () => {},
+      assign: () => {},
+      setFavorite: () => {},
+      ...workspaceOverrides,
     },
   };
 
@@ -170,5 +186,93 @@ test('settings IPC delegates payloads and forwards environment results', async (
   assert.equal(
     await handlers.get('get-browser-environment')({}, undefined),
     environment,
+  );
+});
+
+test('workspace IPC delegates narrow payloads and rejects invalid identifiers or favorites', async () => {
+  const calls = [];
+  const workspaces = [{ id: 'workspace-1', name: 'Work' }];
+  const { handlers } = createHandlerFixture({
+    workspaceService: {
+      list: () => workspaces,
+      create(payload) {
+        calls.push({ method: 'create', payload });
+        return { success: true };
+      },
+      rename(payload) {
+        calls.push({ method: 'rename', payload });
+        return { success: true };
+      },
+      remove(payload) {
+        calls.push({ method: 'remove', payload });
+        return { success: true };
+      },
+      assign(payload) {
+        calls.push({ method: 'assign', payload });
+        return { success: true };
+      },
+      setFavorite(payload) {
+        calls.push({ method: 'setFavorite', payload });
+        return { success: true };
+      },
+    },
+  });
+
+  assert.equal(await handlers.get('get-workspaces')({}, undefined), workspaces);
+  assert.deepEqual(
+    await handlers.get('create-workspace')({}, { name: 'Work' }),
+    { success: true },
+  );
+  assert.deepEqual(
+    await handlers.get('rename-workspace')({}, { workspaceId: 'workspace-1', name: 'Projects' }),
+    { success: true },
+  );
+  assert.deepEqual(
+    await handlers.get('delete-workspace')({}, { workspaceId: 'workspace-1' }),
+    { success: true },
+  );
+  assert.deepEqual(
+    await handlers.get('assign-profile-workspace')({}, {
+      profileId: 'profile-1',
+      workspaceId: null,
+    }),
+    { success: true },
+  );
+  assert.deepEqual(
+    await handlers.get('set-profile-favorite')({}, { profileId: 'profile-1', favorite: true }),
+    { success: true },
+  );
+  assert.deepEqual(calls, [
+    { method: 'create', payload: { name: 'Work' } },
+    { method: 'rename', payload: { workspaceId: 'workspace-1', name: 'Projects' } },
+    { method: 'remove', payload: { workspaceId: 'workspace-1' } },
+    { method: 'assign', payload: { profileId: 'profile-1', workspaceId: null } },
+    { method: 'setFavorite', payload: { profileId: 'profile-1', favorite: true } },
+  ]);
+  assert.deepEqual(
+    await handlers.get('assign-profile-workspace')({}, {
+      profileId: 'profile-1',
+      workspaceId: '',
+    }),
+    { success: false, error: 'Invalid workspace ID' },
+  );
+  assert.deepEqual(
+    await handlers.get('set-profile-favorite')({}, { profileId: 'profile-1', favorite: 'true' }),
+    { success: false, error: 'Invalid favorite value' },
+  );
+});
+
+test('workspace IPC returns a safe result when an asynchronous service operation rejects', async () => {
+  const { handlers } = createHandlerFixture({
+    workspaceService: {
+      create: async () => {
+        throw new Error('Workspace persistence failed');
+      },
+    },
+  });
+
+  assert.deepEqual(
+    await handlers.get('create-workspace')({}, { name: 'Work' }),
+    { success: false, error: 'Workspace persistence failed' },
   );
 });
