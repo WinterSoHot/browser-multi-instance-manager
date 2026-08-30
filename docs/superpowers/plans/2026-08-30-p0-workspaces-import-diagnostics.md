@@ -155,12 +155,13 @@ git commit -m "新增工作区收藏与排序界面"
 - Create: `test/import-preview.test.js`
 - Modify: `lib/profile-service.js`
 - Modify: `lib/ipc-handlers.js`
+- Modify: `main.js`
 - Modify: `preload.js`
 - Modify: `renderer/index.html`
 - Modify: `renderer/index.js`
 
 **Interfaces:**
-- Produces: `previewImport(document, existingProfiles)` returning `{ token, valid, duplicates, invalid }`; `executeImport({ token, decisions })`; renderer `buildImportDecisions(preview, defaultConflictMode)`.
+- Produces: `createImportExportService({ appStore, profileOperations, createProfileDir, pathExists, removeEmptyDirectory, now })` with `previewImport(document)` returning `{ token, valid, duplicates, invalid }` and `executeImport({ token, decisions })`; `profileService.previewImportMetadata()` owns the bounded file dialog/read boundary; renderer `buildImportDecisions(preview, defaultConflictMode)`.
 
 - [ ] **Step 1: Add failing preview and rollback tests**
 
@@ -189,6 +190,8 @@ Run: `node --test test/import-export-service.test.js test/import-preview.test.js
 
 Keep preview tokens in memory with a ten-minute expiry and bind them to the parsed document digest. Accept only `skip` or `rename`; generate rename candidates with `createCloneProfileName`. Do not accept paths or workspace fields from the renderer.
 
+Construct and inject the import service in `main.js`. Import execution must run through the shared global profile-operation coordinator. Track whether each directory existed before creation and roll back only directories newly created by this batch, using a non-recursive empty-directory removal primitive.
+
 - [ ] **Step 4: Implement preview UI**
 
 Show valid, duplicate, and invalid counts plus row details. Disable confirmation when invalid rows exist; allow cancel, skip duplicates, or auto-rename duplicates. Confirmation calls `execute-import` once.
@@ -198,7 +201,7 @@ Show valid, duplicate, and invalid counts plus row details. Disable confirmation
 Run: `node --test test/import-export-service.test.js test/import-preview.test.js test/import-reader.test.js test/profile-utils.test.js && npm test`
 
 ```bash
-git add lib/import-export-service.js lib/profile-service.js lib/ipc-handlers.js preload.js renderer/import-preview.js renderer/index.html renderer/index.js test/import-export-service.test.js test/import-preview.test.js
+git add lib/import-export-service.js lib/profile-service.js lib/ipc-handlers.js main.js preload.js renderer/import-preview.js renderer/index.html renderer/index.js test/import-export-service.test.js test/import-preview.test.js
 git commit -m "新增安全导入预览与冲突处理"
 ```
 
