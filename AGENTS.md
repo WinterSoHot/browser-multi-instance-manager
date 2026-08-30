@@ -2,7 +2,7 @@
 
 ## Structure
 
-Core `main.js`; bridge `preload.js`; UI `renderer/`; helpers `lib/`; icons `build/icons/`; tests `test/`; CI `.github/workflows/build.yml`; `dist/` ignored.
+`main.js`; `preload.js`; UI `renderer/`; helpers `lib/`; icons `build/icons/`; tests `test/`; CI `.github/workflows/build.yml`; `dist/` ignored.
 
 ## Commands
 
@@ -15,9 +15,9 @@ Core `main.js`; bridge `preload.js`; UI `renderer/`; helpers `lib/`; icons `buil
 
 ## Style, Tests, and P0 Invariants
 
-Use CommonJS JS/HTML/CSS with two-space indents, semicolons, trailing commas, `camelCase`, quotes, and CSS variables. `preload.js` exposes only required renderer methods.
+Use CommonJS JS/HTML/CSS with two-space indents, semicolons, trailing commas, `camelCase`, existing quotes, and CSS variables. `preload.js` exposes only required renderer methods.
 
-Add `test/*.test.js` regressions; run `npm test`. Smoke-test paths/platforms. PRs need summary, screenshots, and manual checks. Use Chinese commit subjects: `新增`, `修复`, `优化`, or `更新`.
+Add `test/*.test.js` regressions; run `npm test`. Smoke-test affected paths/platforms. PRs need summary, screenshots, and manual checks. Use Chinese commit subjects: `新增`, `修复`, `优化`, or `更新`.
 
 Before bulk actions remove hidden selections. Workspace/tray launches use one forced snapshot, skip running/unknown, and max four; close only running/retryable states. Test re-entry/bounded failures.
 
