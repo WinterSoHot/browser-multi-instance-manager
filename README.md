@@ -59,8 +59,15 @@ npm test
 .
 ├── main.js                       # Electron 主进程和 IPC
 ├── preload.js                    # 安全的渲染进程桥接
-├── lib/                          # 路径、配置和进程管理模块
-├── renderer/                     # 主界面、设置页面及样式
+├── lib/
+│   ├── app-store.js              # 应用数据存储、默认值和版本迁移
+│   ├── profile-service.js        # 配置生命周期、目录操作和元数据导入导出
+│   ├── ipc-handlers.js           # 主进程 IPC 注册和输入校验
+│   └── ...                       # 路径、进程管理及其他基础模块
+├── renderer/
+│   ├── profile-state.js          # 配置列表、筛选、排序和选择状态
+│   ├── index.js                  # 主界面编排和渲染
+│   └── ...                       # 设置页面及样式
 └── test/                         # Node.js 单元测试
 ```
 
