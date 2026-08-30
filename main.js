@@ -10,6 +10,7 @@ const {
 const { BrowserProcessManager } = require("./lib/browser-process-manager");
 const { createAsyncQueue } = require("./lib/async-queue");
 const { createAppStore } = require("./lib/app-store");
+const { createProfileService } = require("./lib/profile-service");
 const {
   createProfileOperationCoordinator,
 } = require("./lib/profile-operation-coordinator");
@@ -25,16 +26,8 @@ const {
 } = require("./lib/process-inspector");
 const { createWindowAfterInitialization } = require("./lib/window-lifecycle");
 const {
-  createCloneProfileName,
-  createProfileExport,
-  createProfileRecord,
   filterRestorableProcessRecords,
-  isDuplicateProfileName,
-  isStoredProfilePathSafe,
-  resolveProfilePath,
   validateBrowserSettings,
-  validateProfileImportDocument,
-  validateProfileInput,
 } = require("./lib/profile-utils");
 
 // Initialize store
@@ -131,6 +124,24 @@ async function getDirectorySize(directoryPath) {
   return total;
 }
 
+const profileService = createProfileService({
+  appStore,
+  profileOperations,
+  browserProcessManager,
+  getBrowserExecutable,
+  getProfilesDir,
+  createProfileDir,
+  pathExists,
+  getDirectorySize,
+  renameDirectory: fsp.rename,
+  trashItem: shell.trashItem,
+  openPath: shell.openPath,
+  showSaveDialog: (options) => dialog.showSaveDialog(mainWindow, options),
+  showOpenDialog: (options) => dialog.showOpenDialog(mainWindow, options),
+  readImportFile: readTextFileBounded,
+  writeExportFile: (filePath, content) => fsp.writeFile(filePath, content, "utf8"),
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 800,
@@ -147,96 +158,13 @@ function createWindow() {
 }
 
 // IPC Handlers
-ipcMain.handle("get-profiles", () => {
-  return store.get("profiles", []);
-});
+ipcMain.handle("get-profiles", () => profileService.list());
 
-ipcMain.handle("add-profile", (event, payload = {}) => profileOperations.runGlobalMutation(async () => {
-  const { browserType, profileName } = payload;
-  try {
-    validateProfileInput(browserType, profileName);
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
+ipcMain.handle("add-profile", (event, payload) => profileService.add(payload));
 
-  const profiles = store.get("profiles", []);
-  // Check if profile name already exists
-  if (isDuplicateProfileName(profiles, browserType, profileName)) {
-    return { success: false, error: "Profile name already exists" };
-  }
+ipcMain.handle("delete-profile", (event, payload) => profileService.remove(payload));
 
-  const profilePath = await createProfileDir(browserType, profileName);
-
-  const newProfile = createProfileRecord({
-    browserType,
-    profileName,
-    profilePath,
-  });
-
-  profiles.push(newProfile);
-  store.set("profiles", profiles);
-
-  return { success: true, profile: newProfile };
-}));
-
-ipcMain.handle("delete-profile", (event, payload) => {
-  const { profileId, trashData = false } = typeof payload === "string"
-    ? { profileId: payload }
-    : (payload || {});
-  return profileOperations.runMutation(profileId, async () => {
-    const profiles = store.get("profiles", []);
-    const profile = profiles.find((candidate) => candidate.id === profileId);
-    if (!profile) {
-      return { success: false, error: "Profile not found" };
-    }
-    const { running } = await browserProcessManager.getStatus(profileId, { force: true });
-    if (running) {
-      return { success: false, error: "Close the browser before removing its profile" };
-    }
-
-    if (trashData) {
-      if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
-        return { success: false, error: "Profile path is invalid" };
-      }
-      if (await pathExists(profile.path)) await shell.trashItem(profile.path);
-    }
-
-    const filteredProfiles = profiles.filter((p) => p.id !== profileId);
-    store.set("profiles", filteredProfiles);
-    return { success: true };
-  });
-});
-
-ipcMain.handle("launch-browser", (event, profileId) => profileOperations.runLifecycle(
-  profileId,
-  async () => {
-    const profiles = store.get("profiles", []);
-    const profile = profiles.find((p) => p.id === profileId);
-
-    if (!profile) {
-      return { success: false, error: "Profile not found" };
-    }
-
-    if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
-      return { success: false, error: "Profile path is invalid" };
-    }
-
-    const executablePath = getBrowserExecutable(profile.browserType);
-    if (!executablePath || !(await pathExists(executablePath))) {
-      return {
-        success: false,
-        error: `${profile.browserType} not found at ${executablePath}`,
-      };
-    }
-
-    return browserProcessManager.launch({
-      profileId,
-      browserType: profile.browserType,
-      profilePath: profile.path,
-      executablePath,
-    });
-  },
-));
+ipcMain.handle("launch-browser", (event, profileId) => profileService.launch(profileId));
 
 ipcMain.handle("close-browser", async (event, profileId) => {
   return browserProcessManager.close(profileId);
@@ -269,159 +197,17 @@ ipcMain.handle("forget-browser-process", (event, payload = {}) => {
   }
 });
 
-ipcMain.handle("rename-profile", (event, payload = {}) => {
-  const { profileId, newName } = payload;
-  return profileOperations.runMutation(profileId, async () => {
-    const profiles = store.get("profiles", []);
-    const profileIndex = profiles.findIndex((p) => p.id === profileId);
-    if (profileIndex === -1) {
-      return { success: false, error: "Profile not found" };
-    }
-    const { running } = await browserProcessManager.getStatus(profileId, { force: true });
-    if (running) {
-      return { success: false, error: "Close the browser before renaming its profile" };
-    }
+ipcMain.handle("rename-profile", (event, payload) => profileService.rename(payload));
 
-    const profile = profiles[profileIndex];
-    try {
-      validateProfileInput(profile.browserType, newName);
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
+ipcMain.handle("open-profile-folder", (event, profileId) => profileService.openFolder(profileId));
 
-    if (isDuplicateProfileName(profiles, profile.browserType, newName, profileId)) {
-      return { success: false, error: "Profile name already exists" };
-    }
+ipcMain.handle("clone-profile", (event, profileId) => profileService.cloneBlank(profileId));
 
-    if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
-      return { success: false, error: "Profile path is invalid" };
-    }
+ipcMain.handle("get-profile-size", (event, profileId) => profileService.size(profileId));
 
-    const oldPath = profile.path;
-    const newPath = resolveProfilePath(getProfilesDir(), profile.browserType, newName);
+ipcMain.handle("export-profiles", () => profileService.exportMetadata());
 
-    if (await pathExists(oldPath)) {
-      try {
-        await fsp.rename(oldPath, newPath);
-      } catch (error) {
-        return {
-          success: false,
-          error: "Failed to rename directory: " + error.message,
-        };
-      }
-    }
-
-    profile.name = newName;
-    profile.path = newPath;
-    store.set("profiles", profiles);
-
-    return { success: true, profile: profile };
-  });
-});
-
-ipcMain.handle("open-profile-folder", async (event, profileId) => {
-  const profiles = store.get("profiles", []);
-  const profile = profiles.find((p) => p.id === profileId);
-
-  if (!profile) {
-    return { success: false, error: "Profile not found" };
-  }
-
-  if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
-    return { success: false, error: "Profile path is invalid" };
-  }
-
-  if (!(await pathExists(profile.path))) {
-    return { success: false, error: "Profile folder not found" };
-  }
-
-  const errorMessage = await shell.openPath(profile.path);
-  if (errorMessage) {
-    return { success: false, error: errorMessage };
-  }
-  return { success: true };
-});
-
-ipcMain.handle("clone-profile", (event, profileId) => profileOperations.runGlobalMutation(async () => {
-  const profiles = store.get("profiles", []);
-  const source = profiles.find((profile) => profile.id === profileId);
-  if (!source) return { success: false, error: "Profile not found" };
-
-  const profileName = createCloneProfileName(profiles, source.browserType, source.name);
-  const profilePath = await createProfileDir(source.browserType, profileName);
-  const profile = createProfileRecord({
-    browserType: source.browserType,
-    profileName,
-    profilePath,
-  });
-  profiles.push(profile);
-  store.set("profiles", profiles);
-  return { success: true, profile };
-}));
-
-ipcMain.handle("get-profile-size", async (event, profileId) => {
-  const profile = store.get("profiles", []).find((candidate) => candidate.id === profileId);
-  if (!profile) return { success: false, error: "Profile not found" };
-  if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
-    return { success: false, error: "Profile path is invalid" };
-  }
-  if (!(await pathExists(profile.path))) return { success: true, bytes: 0 };
-  try {
-    return { success: true, bytes: await getDirectorySize(profile.path) };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle("export-profiles", async () => {
-  const result = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: "browser-profiles.json",
-    filters: [{ name: "JSON", extensions: ["json"] }],
-  });
-  if (result.canceled || !result.filePath) return { success: false, canceled: true };
-  const document = createProfileExport(store.get("profiles", []));
-  await fsp.writeFile(result.filePath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
-  return { success: true, count: document.profiles.length };
-});
-
-ipcMain.handle("import-profiles", async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ["openFile"],
-    filters: [{ name: "JSON", extensions: ["json"] }],
-  });
-  if (result.canceled || result.filePaths.length === 0) {
-    return { success: false, canceled: true };
-  }
-
-  try {
-    const importPath = result.filePaths[0];
-    const document = JSON.parse(await readTextFileBounded(importPath));
-    const importedMetadata = validateProfileImportDocument(document);
-    return await profileOperations.runGlobalMutation(async () => {
-      const profiles = store.get("profiles", []);
-      const imported = [];
-      let skipped = 0;
-      for (const metadata of importedMetadata) {
-        if (isDuplicateProfileName(profiles, metadata.browserType, metadata.name)) {
-          skipped += 1;
-          continue;
-        }
-        const profilePath = await createProfileDir(metadata.browserType, metadata.name);
-        const profile = createProfileRecord({
-          browserType: metadata.browserType,
-          profileName: metadata.name,
-          profilePath,
-        });
-        profiles.push(profile);
-        imported.push(profile);
-      }
-      store.set("profiles", profiles);
-      return { success: true, profiles: imported, skipped };
-    });
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-});
+ipcMain.handle("import-profiles", () => profileService.importMetadata());
 
 // New IPC handlers for browser settings
 ipcMain.handle("get-browser-settings", () => {
