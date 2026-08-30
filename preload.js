@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('browserAPI', {
     ipcRenderer.on('update-check-result', listener);
     return () => ipcRenderer.removeListener('update-check-result', listener);
   },
+  markUpdatePageReady: () => ipcRenderer.invoke('update-page-ready'),
   getWorkspaces: () => ipcRenderer.invoke('get-workspaces'),
   createWorkspace: (name) => ipcRenderer.invoke('create-workspace', { name }),
   renameWorkspace: (workspaceId, name) => (

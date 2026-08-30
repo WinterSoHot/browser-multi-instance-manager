@@ -9,6 +9,11 @@ function waitForMainTurn() {
   return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
 }
 
+function deferred() {
+  let resolve;
+  return { promise: new Promise((next) => { resolve = next; }), resolve };
+}
+
 async function loadMain({
   profiles = [],
   platform = process.platform,
@@ -24,6 +29,7 @@ async function loadMain({
   const iconPaths = [];
   const updateChecks = [];
   const sent = [];
+  const ipcHandlers = new Map();
 
   class FakeApp extends EventEmitter {
     whenReady() { return Promise.resolve(); }
@@ -75,7 +81,10 @@ async function loadMain({
   const electron = {
     app,
     BrowserWindow: FakeWindow,
-    ipcMain: { handle() {}, removeHandler() {} },
+    ipcMain: {
+      handle(channel, handler) { ipcHandlers.set(channel, handler); },
+      removeHandler(channel) { ipcHandlers.delete(channel); },
+    },
     dialog: {
       async showMessageBox(...args) {
         dialogCalls.push(args);
@@ -200,7 +209,7 @@ async function loadMain({
     Module._load = originalLoad;
     delete require.cache[require.resolve(mainPath)];
   }
-  return { app, windows, dialogCalls, iconPaths, sent, updateChecks };
+  return { app, windows, dialogCalls, iconPaths, sent, updateChecks, ipcHandlers };
 }
 
 test('main drops a closed window reference and opens exit confirmation without a destroyed parent', async () => {
@@ -270,6 +279,7 @@ test('main starts one automatic check after first did-finish-load and sends a na
   const harness = await loadMain({
     updateResult: { status: 'available', version: '1.4.0', releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0' },
   });
+  await harness.ipcHandlers.get('update-page-ready')({ sender: harness.windows[0].webContents });
   harness.windows[0].webContents.emit('did-finish-load');
   await waitForMainTurn();
   harness.windows[0].webContents.emit('did-finish-load');
@@ -303,6 +313,7 @@ test('main turns malformed or stale automatic results into a stable error event'
   const harness = await loadMain({
     updateResult: { status: 'available', version: '1.3.1', releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.3.1' },
   });
+  await harness.ipcHandlers.get('update-page-ready')({ sender: harness.windows[0].webContents });
   harness.windows[0].webContents.emit('did-finish-load');
   await waitForMainTurn();
 
@@ -310,4 +321,44 @@ test('main turns malformed or stale automatic results into a stable error event'
     channel: 'update-check-result',
     payload: { status: 'error', code: 'UPDATE_CHECK_REQUEST_FAILED' },
   }]);
+});
+
+test('a delayed automatic result is replayed only after returning from settings to a ready home page', async () => {
+  const pending = deferred();
+  const result = {
+    status: 'available',
+    version: '1.4.0',
+    releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0',
+  };
+  const harness = await loadMain({ updateResult: pending.promise });
+  const window = harness.windows[0];
+
+  await harness.ipcHandlers.get('update-page-ready')({ sender: window.webContents });
+  window.webContents.emit('did-finish-load');
+  window.webContents.emit('did-start-navigation');
+  pending.resolve(result);
+  await waitForMainTurn();
+  assert.deepEqual(harness.sent, []);
+
+  await harness.ipcHandlers.get('update-page-ready')({ sender: window.webContents });
+  assert.deepEqual(harness.sent, [{ channel: 'update-check-result', payload: result }]);
+});
+
+test('a recreated ready home page receives an automatic result that resolves after its handshake', async () => {
+  const pending = deferred();
+  const result = { status: 'current' };
+  const harness = await loadMain({ updateResult: pending.promise });
+  const first = harness.windows[0];
+  first.webContents.emit('did-finish-load');
+  first.detachWithoutClosedEvent();
+  first.emitClosed();
+  harness.app.emit('activate');
+  await waitForMainTurn();
+  const second = harness.windows[0];
+
+  await harness.ipcHandlers.get('update-page-ready')({ sender: second.webContents });
+  pending.resolve(result);
+  await waitForMainTurn();
+  assert.deepEqual(harness.updateChecks, [{ force: false }]);
+  assert.deepEqual(harness.sent, [{ channel: 'update-check-result', payload: result }]);
 });

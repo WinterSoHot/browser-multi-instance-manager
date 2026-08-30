@@ -65,6 +65,8 @@ const enqueueSettingsMutation = createAsyncQueue();
 let mainWindow;
 let trayManager;
 let automaticUpdateCheckStarted = false;
+let latestAutomaticUpdateResult = null;
+let updateHomeWebContents = null;
 const currentAppVersion = typeof app.getVersion === "function" ? app.getVersion() : "0.0.0";
 const updateChecker = createUpdateChecker({
   currentVersion: currentAppVersion,
@@ -73,6 +75,27 @@ const updateChecker = createUpdateChecker({
     get: () => appStore.getUpdateCheckCache(),
     set: (cache) => appStore.setUpdateCheckCache(cache),
   },
+});
+
+function isCurrentHomeWebContents(webContents) {
+  return Boolean(mainWindow && !mainWindow.isDestroyed()
+    && mainWindow.webContents === webContents && webContents && !webContents.isDestroyed?.());
+}
+
+function replayAutomaticUpdateResult() {
+  if (!latestAutomaticUpdateResult || !isCurrentHomeWebContents(updateHomeWebContents)) return;
+  try {
+    updateHomeWebContents.send("update-check-result", latestAutomaticUpdateResult);
+  } catch {
+    updateHomeWebContents = null;
+  }
+}
+
+ipcMain.handle("update-page-ready", (event) => {
+  if (!isCurrentHomeWebContents(event.sender)) return { success: false };
+  updateHomeWebContents = event.sender;
+  replayAutomaticUpdateResult();
+  return { success: true };
 });
 const browserProcessManager = new BrowserProcessManager({
   verifyProcess: inspectBrowserProcess,
@@ -221,16 +244,19 @@ function createWindow() {
       if (!enabled) return;
       void Promise.resolve(updateChecker.check({ force: false })).then((result) => {
         const safeResult = sanitizeUpdateResult(result, currentAppVersion);
-        if (window === mainWindow && !window.isDestroyed()) {
-          window.webContents.send("update-check-result", safeResult);
-        }
+        latestAutomaticUpdateResult = safeResult;
+        replayAutomaticUpdateResult();
       }).catch(() => {});
     });
   }
+  window.webContents.on?.("did-start-navigation", () => {
+    if (updateHomeWebContents === window.webContents) updateHomeWebContents = null;
+  });
   window.on("close", (event) => {
     void appLifecycle.handleWindowClose(event);
   });
   window.on("closed", () => {
+    if (updateHomeWebContents === window.webContents) updateHomeWebContents = null;
     if (mainWindow === window) mainWindow = undefined;
   });
   return window;

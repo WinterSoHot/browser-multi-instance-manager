@@ -1743,6 +1743,7 @@ const homeUpdateController = window.createUpdateUiController({
 window.browserAPI.onUpdateCheckResult((result) => {
   homeUpdateController.accept(result);
 });
+void window.browserAPI.markUpdatePageReady().catch(() => {});
 document.getElementById('dismissUpdateNotice').addEventListener('click', () => {
   homeUpdateController.dismiss();
 });
