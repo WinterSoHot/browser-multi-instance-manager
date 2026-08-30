@@ -17,23 +17,23 @@ const appSettingsController = window.createAppSettingsController({
   getAppSettings: () => window.browserAPI.getAppSettings(),
   setAppSettings: (settings) => window.browserAPI.setAppSettings(settings),
 });
+const closeToTrayBinding = window.bindCloseToTrayCheckbox({
+  checkbox: document.getElementById('closeToTray'),
+  controller: appSettingsController,
+  showError: () => alert('保存托盘设置失败，请重试'),
+});
 
 function setSettingsBusy(busy) {
   document.getElementById('saveSettings').disabled = busy;
   document.getElementById('resetSettings').disabled = busy;
 }
 
-function setAppSettingsBusy(busy) {
-  document.getElementById('closeToTray').disabled = busy;
-}
-
 async function loadAppSettings() {
-  setAppSettingsBusy(true);
   try {
     const settings = await appSettingsController.load();
     document.getElementById('closeToTray').checked = settings.closeToTray;
   } finally {
-    setAppSettingsBusy(false);
+    closeToTrayBinding.sync();
   }
 }
 
@@ -168,22 +168,6 @@ document.getElementById('resetSettings').addEventListener('click', async () => {
     alert('重置设置失败，请重试');
   } finally {
     setSettingsBusy(false);
-  }
-});
-
-document.getElementById('closeToTray').addEventListener('change', async (event) => {
-  const checkbox = event.currentTarget;
-  if (!appSettingsController.isLoaded()) return;
-  const requestedValue = checkbox.checked;
-  setAppSettingsBusy(true);
-  try {
-    const result = await appSettingsController.save({ closeToTray: requestedValue });
-    checkbox.checked = result.settings.closeToTray;
-    if (!result.success) {
-      alert('保存托盘设置失败，请重试');
-    }
-  } finally {
-    setAppSettingsBusy(false);
   }
 });
 

@@ -50,7 +50,12 @@ function createAppSettingsController({ getAppSettings, setAppSettings }) {
     };
   }
 
-  return { load, save, isLoaded: () => loaded };
+  return {
+    load,
+    save,
+    isLoaded: () => loaded,
+    getCurrent: () => ({ ...persistedSettings }),
+  };
 }
 
 if (typeof module !== 'undefined') module.exports = { createAppSettingsController };
