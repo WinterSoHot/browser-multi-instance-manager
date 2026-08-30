@@ -43,6 +43,31 @@ test('preview markup exposes counts, row details, and a disabled confirm control
   assert.match(markup || '', /id="confirmImportPreview"[^>]*disabled/u);
 });
 
+test('import preview state allows one submission, closes failed requests, and ignores an old completion', () => {
+  const first = { code: 'OK', token: 'a'.repeat(64), valid: [], duplicates: [], invalid: [] };
+  const second = { code: 'OK', token: 'b'.repeat(64), valid: [], duplicates: [], invalid: [] };
+  const state = previewUi.createImportPreviewState?.();
+
+  assert.equal(state?.open(first), true);
+  assert.equal(state?.canCancel(), true);
+  assert.deepEqual(state?.startExecute(), { token: first.token });
+  assert.equal(state?.startExecute(), null, 'double-click must not issue another execute');
+  assert.equal(state?.canCancel(), false, 'cancel must be blocked while execute is pending');
+  assert.equal(state?.finish(first.token), true, 'a failed or successful request closes its preview');
+  assert.equal(state?.getSnapshot().preview, null);
+
+  assert.equal(state?.open(second), true);
+  assert.equal(state?.finish(first.token), false, 'an old response must not clear a new preview');
+  assert.equal(state?.getSnapshot().preview.token, second.token);
+});
+
+test('only an OK preview with an opaque token can be confirmed', () => {
+  const valid = { code: 'OK', token: 'a'.repeat(64), valid: [], duplicates: [], invalid: [] };
+  assert.equal(previewUi.isConfirmableImportPreview?.(valid), true);
+  assert.equal(previewUi.isConfirmableImportPreview?.({ ...valid, code: 'IMPORT_PREVIEW_CAPACITY_REACHED', token: null }), false);
+  assert.equal(previewUi.isConfirmableImportPreview?.({ ...valid, invalid: [{ line: 1 }] }), false);
+});
+
 test('import dialog keeps the two-phase confirmation contract in the renderer', () => {
   const root = path.join(__dirname, '..');
   const html = fs.readFileSync(path.join(root, 'renderer', 'index.html'), 'utf8');
@@ -53,6 +78,9 @@ test('import dialog keeps the two-phase confirmation contract in the renderer', 
   assert.match(html, /import-preview\.js/u);
   assert.match(source, /window\.browserAPI\.previewImport\(/u);
   assert.match(source, /window\.browserAPI\.executeImport\(/u);
-  assert.match(source, /importPreviewBusy/u);
+  assert.match(source, /createImportPreviewState/u);
   assert.match(source, /buildImportDecisions/u);
+  assert.match(source, /classList\.add\('show'\)/u);
+  assert.doesNotMatch(source, /importPreviewModal'\)\.classList\.add\('active'\)/u);
+  assert.match(source, /cancelImportPreview'\)\.disabled = false/u);
 });

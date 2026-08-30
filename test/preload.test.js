@@ -83,4 +83,5 @@ test('preload exposes only the two-phase import calls', async () => {
       args: [{ token: 'a'.repeat(64), decisions: [{ line: 2, action: 'skip' }] }],
     },
   ]);
+  assert.equal(browserApi.importProfiles, undefined);
 });

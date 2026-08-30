@@ -17,7 +17,12 @@ const {
 } = window.viewUtils;
 const { createProfileState } = window.profileState;
 const { executeWorkspaceBatch, createWorkspaceBatchRunner } = window.workspaceBatch;
-const { buildImportDecisions, renderImportPreview } = window.ImportPreview;
+const {
+  buildImportDecisions,
+  createImportPreviewState,
+  hasValidImportToken,
+  renderImportPreview,
+} = window.ImportPreview;
 
 const profileState = createProfileState();
 let currentRenameId = null;
@@ -27,8 +32,7 @@ let statusCheckInterval = null;
 let statusRefreshTimer = null;
 let currentViewMode = 'list'; // 'list' or 'grid'
 let workspaces = [];
-let activeImportPreview = null;
-let importPreviewBusy = false;
+const importPreviewState = createImportPreviewState();
 
 // Toast notification system
 function showToast(message, type = 'info') {
@@ -1409,9 +1413,9 @@ document.getElementById('exportProfilesBtn')?.addEventListener('click', async ()
 });
 
 function closeImportPreview() {
-  activeImportPreview = null;
-  importPreviewBusy = false;
-  document.getElementById('importPreviewModal').classList.remove('active');
+  if (!importPreviewState.close()) return false;
+  document.getElementById('importPreviewModal').classList.remove('show');
+  return true;
 }
 
 function getImportConflictMode() {
@@ -1419,46 +1423,68 @@ function getImportConflictMode() {
 }
 
 function showImportPreview(preview) {
-  activeImportPreview = preview;
+  if (!importPreviewState.open(preview)) return false;
   const body = document.getElementById('importPreviewBody');
   body.innerHTML = renderImportPreview(preview);
-  document.getElementById('importPreviewModal').classList.add('active');
+  const modal = document.getElementById('importPreviewModal');
+  document.getElementById('cancelImportPreview').disabled = false;
+  document.querySelectorAll('input[name="importConflictMode"]').forEach((input) => {
+    input.disabled = false;
+  });
+  modal.classList.add('show');
   const confirmButton = document.getElementById('confirmImportPreview');
   confirmButton?.addEventListener('click', async () => {
-    if (importPreviewBusy || !activeImportPreview || activeImportPreview.invalid.length > 0) return;
-    importPreviewBusy = true;
+    const execution = importPreviewState.startExecute();
+    if (!execution) return;
     confirmButton.disabled = true;
+    document.getElementById('cancelImportPreview').disabled = true;
+    document.querySelectorAll('input[name="importConflictMode"]').forEach((input) => {
+      input.disabled = true;
+    });
     try {
       const result = await window.browserAPI.executeImport(
-        activeImportPreview.token,
-        buildImportDecisions(activeImportPreview, getImportConflictMode()),
+        execution.token,
+        buildImportDecisions(preview, getImportConflictMode()),
       );
       if (!result?.success) {
         showToast(`导入失败：${result?.code || '请求失败'}`, 'error');
         return;
       }
-      profileState.setProfiles(await window.browserAPI.getProfiles());
-      renderProfiles();
-      closeImportPreview();
+      try {
+        profileState.setProfiles(await window.browserAPI.getProfiles());
+        renderProfiles();
+      } catch {
+        showToast('导入完成，但刷新配置列表失败', 'warning');
+      }
       showToast(`已导入 ${result.profiles.length} 个配置`, 'success');
     } catch {
       showToast('导入失败：请求失败', 'error');
     } finally {
-      importPreviewBusy = false;
-      if (document.getElementById('importPreviewModal').classList.contains('active')) {
-        confirmButton.disabled = Boolean(activeImportPreview?.invalid?.length);
-      }
+      if (!importPreviewState.finish(execution.token)) return;
+      modal.classList.remove('show');
     }
   });
+  return true;
 }
 
 document.getElementById('cancelImportPreview')?.addEventListener('click', closeImportPreview);
+document.getElementById('importPreviewModal')?.addEventListener('click', (event) => {
+  if (event.target.id === 'importPreviewModal') closeImportPreview();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeImportPreview();
+});
 
 document.getElementById('importProfilesBtn')?.addEventListener('click', async () => {
+  if (importPreviewState.getSnapshot().executingToken) return;
   try {
     const preview = await window.browserAPI.previewImport();
     if (preview?.success === false) {
       if (preview.code !== 'IMPORT_CANCELED') showToast(`导入失败：${preview.code || '请求失败'}`, 'error');
+      return;
+    }
+    if (!hasValidImportToken(preview)) {
+      showToast(`导入失败：${preview?.code || '请求失败'}`, 'error');
       return;
     }
     showImportPreview(preview);

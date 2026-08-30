@@ -13,6 +13,7 @@ function createFixture({
   profiles = [],
   failCreateAt = null,
   createFailureLeavesPath = false,
+  throwSetProfilesAt = null,
   now = () => 0,
   maxPreviewTokens,
 } = {}) {
@@ -21,10 +22,13 @@ function createFixture({
   const createdDirectories = [];
   const removedDirectories = [];
   let createCalls = 0;
+  let setProfilesCalls = 0;
   const service = createImportExportService({
     appStore: {
       getProfiles: () => structuredClone(storedProfiles),
       setProfiles(nextProfiles) {
+        setProfilesCalls += 1;
+        if (setProfilesCalls === throwSetProfilesAt) throw new Error('store write unavailable');
         storedProfiles = structuredClone(nextProfiles);
       },
     },
@@ -141,6 +145,74 @@ test('execute uses the current profiles snapshot and rejects a preview made stal
   assert.deepEqual(fixture.createdDirectories, []);
 });
 
+test('a later stale row prevents every directory creation in a multi-row import', async () => {
+  const fixture = createFixture();
+  const preview = await fixture.service?.previewImport({
+    version: 1,
+    profiles: [
+      { browserType: 'chrome', name: 'Personal' },
+      { browserType: 'firefox', name: 'Projects' },
+    ],
+  });
+  fixture.setProfiles([{
+    id: 'racer', browserType: 'firefox', name: 'Projects', path: '/profiles/firefox/Projects',
+  }]);
+
+  assert.deepEqual(
+    await fixture.service?.executeImport({ token: preview?.token, decisions: [] }),
+    { success: false, code: 'IMPORT_PREVIEW_STALE' },
+  );
+  assert.deepEqual(fixture.createdDirectories, []);
+  assert.deepEqual(fixture.removedDirectories, []);
+});
+
+test('duplicate decisions must exactly match the duplicate rows stored with the preview token', async () => {
+  const fixture = createFixture({
+    profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work', path: '/profiles/chrome/Work' }],
+  });
+  const preview = await fixture.service?.previewImport({
+    version: 1,
+    profiles: [
+      { browserType: 'chrome', name: 'Work' },
+      { browserType: 'firefox', name: 'Personal' },
+    ],
+  });
+
+  for (const decisions of [
+    [],
+    [{ line: 1, action: 'skip' }, { line: 2, action: 'rename' }],
+    [{ line: 3, action: 'skip' }],
+  ]) {
+    assert.deepEqual(
+      await fixture.service?.executeImport({ token: preview?.token, decisions }),
+      { success: false, code: 'IMPORT_DECISIONS_INVALID' },
+    );
+  }
+  assert.deepEqual(fixture.createdDirectories, []);
+});
+
+test('skip remains a skip and rename remains a clone when a previewed duplicate disappears', async () => {
+  for (const [action, expectedNames] of [
+    ['skip', []],
+    ['rename', ['Work 副本']],
+  ]) {
+    const fixture = createFixture({
+      profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work', path: '/profiles/chrome/Work' }],
+    });
+    const preview = await fixture.service?.previewImport({
+      version: 1,
+      profiles: [{ browserType: 'chrome', name: 'Work' }],
+    });
+    fixture.setProfiles([]);
+
+    assert.equal((await fixture.service?.executeImport({
+      token: preview?.token,
+      decisions: [{ line: 1, action }],
+    }))?.success, true);
+    assert.deepEqual(fixture.profiles().map((profile) => profile.name), expectedNames);
+  }
+});
+
 test('execute rolls back profile records and only new empty directories when a directory creation fails', async () => {
   const fixture = createFixture({
     profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work', path: '/profiles/chrome/Work' }],
@@ -174,6 +246,23 @@ test('rollback never removes a directory from a failed creation attempt', async 
     { success: false, code: 'IMPORT_EXECUTION_FAILED' },
   );
   assert.deepEqual(fixture.removedDirectories, []);
+});
+
+test('rollback continues cleaning batch directories when restoring the profile snapshot throws', async () => {
+  const fixture = createFixture({ failCreateAt: 2, throwSetProfilesAt: 1 });
+  const preview = await fixture.service?.previewImport({
+    version: 1,
+    profiles: [
+      { browserType: 'firefox', name: 'Personal' },
+      { browserType: 'edge', name: 'Projects' },
+    ],
+  });
+
+  assert.deepEqual(
+    await fixture.service?.executeImport({ token: preview?.token, decisions: [] }),
+    { success: false, code: 'IMPORT_ROLLBACK_INCOMPLETE' },
+  );
+  assert.deepEqual(fixture.removedDirectories, ['/profiles/firefox/Personal']);
 });
 
 test('preview tokens expire, have a hard capacity, bind normalized metadata, and cannot be replayed', async () => {

@@ -357,7 +357,7 @@ test('markLaunched uses the global mutation queue instead of waiting for lifecyc
   assert.equal((await marked).success, true);
 });
 
-test('export and import keep only profile metadata and skip duplicate names', async () => {
+test('export keeps only profile metadata and removes the legacy one-shot import entry point', async () => {
   const profile = {
     id: 'p1',
     browserType: 'chrome',
@@ -381,16 +381,7 @@ test('export and import keep only profile metadata and skip duplicate names', as
     content: '{\n  "version": 1,\n  "profiles": [\n    {\n      "browserType": "chrome",\n      "name": "Work"\n    }\n  ]\n}\n',
   }]);
 
-  const imported = await fixture.service.importMetadata();
-  assert.equal(imported.success, true);
-  assert.equal(imported.skipped, 1);
-  assert.equal(imported.profiles.length, 1);
-  assert.deepEqual(imported.profiles[0].browserType, 'firefox');
-  assert.deepEqual(imported.profiles[0].name, 'Personal');
-  assert.deepEqual(fixture.storeState().profiles.map(({ browserType, name }) => ({ browserType, name })), [
-    { browserType: 'chrome', name: 'Work' },
-    { browserType: 'firefox', name: 'Personal' },
-  ]);
+  assert.equal(fixture.service.importMetadata, undefined);
 });
 
 test('previewImportMetadata owns the file dialog and bounded reader without exposing the selected path', async () => {

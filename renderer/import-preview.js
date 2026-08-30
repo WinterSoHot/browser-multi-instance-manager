@@ -15,6 +15,51 @@
     return preview.duplicates.map((row) => ({ line: row.line, action: defaultConflictMode }));
   }
 
+  function hasValidImportToken(preview) {
+    return preview?.code === 'OK' && /^[a-f0-9]{64}$/u.test(preview.token || '');
+  }
+
+  function isConfirmableImportPreview(preview) {
+    return hasValidImportToken(preview)
+      && Array.isArray(preview.invalid)
+      && preview.invalid.length === 0;
+  }
+
+  function createImportPreviewState() {
+    let preview = null;
+    let executingToken = null;
+
+    return {
+      open(nextPreview) {
+        if (preview || executingToken || !hasValidImportToken(nextPreview)) return false;
+        preview = nextPreview;
+        return true;
+      },
+      startExecute() {
+        if (!preview || executingToken || !isConfirmableImportPreview(preview)) return null;
+        executingToken = preview.token;
+        return { token: executingToken };
+      },
+      finish(token) {
+        if (!executingToken || token !== executingToken) return false;
+        preview = null;
+        executingToken = null;
+        return true;
+      },
+      close() {
+        if (!preview || executingToken) return false;
+        preview = null;
+        return true;
+      },
+      canCancel() {
+        return Boolean(preview) && !executingToken;
+      },
+      getSnapshot() {
+        return { preview, executingToken };
+      },
+    };
+  }
+
   function rowMarkup(rows, type) {
     return rows.map((row) => {
       const detail = type === 'invalid'
@@ -31,11 +76,17 @@
     return [
       `<p class="import-preview-counts">可导入 <span id="importPreviewValidCount">${valid.length}</span>，重复 <span id="importPreviewDuplicateCount">${duplicates.length}</span>，无效 <span id="importPreviewInvalidCount">${invalid.length}</span></p>`,
       `<ul class="import-preview-rows">${rowMarkup(valid, 'valid')}${rowMarkup(duplicates, 'duplicate')}${rowMarkup(invalid, 'invalid')}</ul>`,
-      `<button id="confirmImportPreview" type="button" class="btn btn-primary"${invalid.length > 0 ? ' disabled' : ''}>确认导入</button>`,
+      `<button id="confirmImportPreview" type="button" class="btn btn-primary"${isConfirmableImportPreview(preview) ? '' : ' disabled'}>确认导入</button>`,
     ].join('');
   }
 
-  const api = { buildImportDecisions, renderImportPreview };
+  const api = {
+    buildImportDecisions,
+    createImportPreviewState,
+    hasValidImportToken,
+    isConfirmableImportPreview,
+    renderImportPreview,
+  };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ImportPreview = api;
 }(typeof window === 'undefined' ? globalThis : window));

@@ -18,7 +18,6 @@ const expectedChannels = [
   'clone-profile',
   'get-profile-size',
   'export-profiles',
-  'import-profiles',
   'preview-import',
   'execute-import',
   'get-browser-settings',
@@ -63,7 +62,6 @@ function createHandlerFixture({
       cloneBlank: () => {},
       size: () => {},
       exportMetadata: () => {},
-      importMetadata: () => {},
       previewImportMetadata: () => {},
       executeImport: () => {},
       ...profileOverrides,
@@ -113,6 +111,11 @@ test('registers each existing IPC channel once and unregisters cleanly', () => {
   unregister();
 
   assert.equal(handlers.size, 0);
+});
+
+test('IPC removes the legacy one-shot import channel', () => {
+  const { handlers } = createHandlerFixture();
+  assert.equal(handlers.has('import-profiles'), false);
 });
 
 test('profile IPC delegates the original payload and forwards the service result', async () => {

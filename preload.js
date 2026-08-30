@@ -9,7 +9,6 @@ contextBridge.exposeInMainWorld('browserAPI', {
   cloneProfile: (profileId) => ipcRenderer.invoke('clone-profile', profileId),
   getProfileSize: (profileId) => ipcRenderer.invoke('get-profile-size', profileId),
   exportProfiles: () => ipcRenderer.invoke('export-profiles'),
-  importProfiles: () => ipcRenderer.invoke('import-profiles'),
   previewImport: () => ipcRenderer.invoke('preview-import'),
   executeImport: (token, decisions) => (
     ipcRenderer.invoke('execute-import', { token, decisions })
