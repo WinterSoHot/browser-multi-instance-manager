@@ -207,6 +207,11 @@ test('treats all editable controls as keyboard shortcut boundaries', () => {
   assert.equal(viewUtils.isEditableTarget?.({ tagName: 'DIV', isContentEditable: false }), false);
 });
 
+test('does not treat an assignment select as a profile-card selection click', () => {
+  assert.equal(viewUtils.shouldToggleProfileCardSelection?.({ tagName: 'SELECT' }), false);
+  assert.equal(viewUtils.shouldToggleProfileCardSelection?.({ tagName: 'DIV' }), true);
+});
+
 test('runs bulk work with a fixed concurrency limit and preserves result order', async () => {
   let active = 0;
   let peak = 0;

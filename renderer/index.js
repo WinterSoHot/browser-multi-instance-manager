@@ -12,16 +12,19 @@ const {
   mapWithConcurrency,
   normalizeStatusSnapshot,
   isEditableTarget,
+  shouldToggleProfileCardSelection,
   summarizeResults,
 } = window.viewUtils;
 const { createProfileState } = window.profileState;
 
 const profileState = createProfileState();
 let currentRenameId = null;
+let currentWorkspaceId = null;
 let busyProfiles = new Set();
 let statusCheckInterval = null;
 let statusRefreshTimer = null;
 let currentViewMode = 'list'; // 'list' or 'grid'
+let workspaces = [];
 
 // Toast notification system
 function showToast(message, type = 'info') {
@@ -62,7 +65,12 @@ function showToast(message, type = 'info') {
 
 // Load profiles on startup
 async function loadProfiles() {
-  profileState.setProfiles(await window.browserAPI.getProfiles());
+  const [profiles, loadedWorkspaces] = await Promise.all([
+    window.browserAPI.getProfiles(),
+    window.browserAPI.getWorkspaces(),
+  ]);
+  profileState.setProfiles(profiles);
+  workspaces = Array.isArray(loadedWorkspaces) ? loadedWorkspaces : [];
   try {
     await refreshAllStatuses();
   } catch (error) {
@@ -106,7 +114,11 @@ async function refreshStatuses(forceProfileId = null) {
   } else {
     profileState.setStatuses(normalized);
   }
-  updateVisibleStatusCards();
+  if (profileState.getSnapshot().sort === 'status') {
+    renderProfiles();
+  } else {
+    updateVisibleStatusCards();
+  }
 }
 
 const refreshAllStatuses = createSingleFlightTask(() => refreshStatuses());
@@ -131,6 +143,25 @@ function startStatusPolling() {
 
 function getVisibleProfiles() {
   return profileState.getVisibleProfiles();
+}
+
+function getWorkspaceById(workspaceId) {
+  return workspaces.find((workspace) => workspace.id === workspaceId) || null;
+}
+
+function getWorkspaceOptions(selectedWorkspaceId) {
+  const selected = selectedWorkspaceId == null ? '' : String(selectedWorkspaceId);
+  return [
+    '<option value="">未分组</option>',
+    ...workspaces.map((workspace) => (
+      `<option value="${escapeHtml(workspace.id)}" ${workspace.id === selected ? 'selected' : ''}>${escapeHtml(workspace.name)}</option>`
+    )),
+  ].join('');
+}
+
+function getWorkspaceLabel(profile) {
+  const workspace = getWorkspaceById(profile.workspaceId);
+  return workspace ? `<span class="workspace-tag">${escapeHtml(workspace.name)}</span>` : '';
 }
 
 function getStatusMarkup(profile, statusMembership) {
@@ -163,6 +194,7 @@ function renderProfiles() {
 
   // Filter profiles based on current filter and search query
   const filteredProfiles = getVisibleProfiles();
+  renderWorkspaceSidebar();
 
   if (filteredProfiles.length === 0) {
     const hasActiveFilter = filter !== 'all' || query !== '';
@@ -188,9 +220,16 @@ function renderProfiles() {
           ${getBrowserIcon(profile.browserType)}
           ${escapeHtml(profile.browserType)}
         </span>
+        ${getWorkspaceLabel(profile)}
       </div>
       <div class="profile-actions">
         <span class="profile-status-actions">${getStatusMarkup(profile, statusMembership)}</span>
+        <button class="btn btn-secondary btn-small favorite-toggle ${profile.favorite ? 'is-favorite' : ''}" data-profile-action="toggle-favorite" data-profile-id="${escapeHtml(profile.id)}" aria-pressed="${profile.favorite === true}" title="${profile.favorite ? '取消收藏' : '收藏'}">${profile.favorite ? '★ 已收藏' : '☆ 收藏'}</button>
+        <label class="workspace-assignment">归属
+          <select data-profile-workspace-id="${escapeHtml(profile.id)}" aria-label="${escapeHtml(profile.name)} 的工作区">
+            ${getWorkspaceOptions(profile.workspaceId)}
+          </select>
+        </label>
         <button class="btn btn-secondary btn-small" data-profile-action="open-folder" data-profile-id="${escapeHtml(profile.id)}">文件夹</button>
         <button class="btn btn-secondary btn-small" data-profile-action="profile-size" data-profile-id="${escapeHtml(profile.id)}">大小</button>
         <button class="btn btn-secondary btn-small" data-profile-action="clone" data-profile-id="${escapeHtml(profile.id)}">新建空白副本</button>
@@ -206,11 +245,179 @@ function renderProfiles() {
   updateCloseSelectedButton();
 }
 
+function renderWorkspaceSidebar() {
+  const { filter } = profileState.getSnapshot();
+  const workspaceList = document.getElementById('workspaceList');
+  const workspaceActions = document.getElementById('workspaceBatchActions');
+  const workspaceId = filter.startsWith('workspace:')
+    ? filter.slice('workspace:'.length)
+    : null;
+
+  workspaceList.innerHTML = workspaces.map((workspace) => `
+    <button class="workspace-filter-btn ${workspace.id === workspaceId ? 'active' : ''}" type="button" data-workspace-filter="workspace:${escapeHtml(workspace.id)}">
+      ${escapeHtml(workspace.name)}
+    </button>
+  `).join('');
+
+  document.querySelectorAll('[data-workspace-filter]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.workspaceFilter === filter);
+  });
+  workspaceActions.hidden = workspaceId === null || getWorkspaceById(workspaceId) === null;
+}
+
+function renderWorkspaceModalList() {
+  const list = document.getElementById('workspaceModalList');
+  list.innerHTML = workspaces.length === 0
+    ? '<p class="workspace-empty">还没有自定义工作区</p>'
+    : workspaces.map((workspace) => `
+      <div class="workspace-modal-row" data-workspace-id="${escapeHtml(workspace.id)}">
+        <span>${escapeHtml(workspace.name)}</span>
+        <div>
+          <button class="btn btn-secondary btn-small" type="button" data-workspace-action="rename" data-workspace-id="${escapeHtml(workspace.id)}">重命名</button>
+          <button class="btn btn-danger btn-small" type="button" data-workspace-action="delete" data-workspace-id="${escapeHtml(workspace.id)}">删除</button>
+        </div>
+      </div>
+    `).join('');
+}
+
+function setWorkspaceFilter(filter) {
+  profileState.setFilter(filter);
+  document.querySelectorAll('.filter-btn').forEach((button) => button.classList.remove('active'));
+  renderProfiles();
+}
+
+function updateWorkspaceFromResult(profileId, result) {
+  if (result?.success && result.profile) {
+    profileState.updateProfile(profileId, result.profile);
+    renderProfiles();
+    return true;
+  }
+  return false;
+}
+
+async function toggleProfileFavorite(profileId) {
+  const profile = profileState.getSnapshot().profiles.find((item) => item.id === profileId);
+  if (!profile) {
+    showToast('配置不存在', 'error');
+    return;
+  }
+  try {
+    const result = await window.browserAPI.setProfileFavorite(profileId, !profile.favorite);
+    if (!updateWorkspaceFromResult(profileId, result)) {
+      showToast(`收藏更新失败：${result?.error || '请求失败'}`, 'error');
+      return;
+    }
+    showToast(profile.favorite ? '已取消收藏' : '已添加到收藏', 'success');
+  } catch (error) {
+    showToast(`收藏更新失败：${error?.message || '请求失败'}`, 'error');
+  }
+}
+
+async function assignProfileWorkspace(profileId, workspaceId) {
+  try {
+    const result = await window.browserAPI.assignProfileWorkspace(profileId, workspaceId);
+    if (!updateWorkspaceFromResult(profileId, result)) {
+      showToast(`工作区归属更新失败：${result?.error || '请求失败'}`, 'error');
+      renderProfiles();
+      return;
+    }
+    showToast(workspaceId === null ? '已移出工作区' : '工作区归属已更新', 'success');
+  } catch (error) {
+    showToast(`工作区归属更新失败：${error?.message || '请求失败'}`, 'error');
+    renderProfiles();
+  }
+}
+
+async function getFreshWorkspaceStatusSnapshot(profiles) {
+  const entries = await mapWithConcurrency(profiles, 4, async (profile) => {
+    try {
+      return [profile.id, await window.browserAPI.refreshBrowserStatus(profile.id)];
+    } catch {
+      return [profile.id, { verificationUnavailable: true }];
+    }
+  });
+  const normalized = normalizeStatusSnapshot(Object.fromEntries(entries));
+  const current = profileState.getSnapshot();
+  const runningIds = new Set(current.runningIds);
+  const unknownIds = new Set(current.unknownIds);
+  const retryableCloseIds = new Set(current.retryableCloseIds);
+  profiles.forEach((profile) => {
+    runningIds.delete(profile.id);
+    unknownIds.delete(profile.id);
+    retryableCloseIds.delete(profile.id);
+  });
+  normalized.runningIds.forEach((profileId) => runningIds.add(profileId));
+  normalized.unknownIds.forEach((profileId) => unknownIds.add(profileId));
+  normalized.retryableCloseIds.forEach((profileId) => retryableCloseIds.add(profileId));
+  profileState.setStatuses({ runningIds, unknownIds, retryableCloseIds });
+  return createStatusMembership(normalized);
+}
+
+async function runWorkspaceBatch(action) {
+  const { filter, profiles } = profileState.getSnapshot();
+  const workspaceId = filter.startsWith('workspace:')
+    ? filter.slice('workspace:'.length)
+    : null;
+  const workspace = workspaceId ? getWorkspaceById(workspaceId) : null;
+  if (!workspace) return;
+
+  const targets = profiles.filter((profile) => profile.workspaceId === workspaceId);
+  if (targets.length === 0) {
+    showToast('此工作区没有配置', 'info');
+    return;
+  }
+
+  const launchButton = document.getElementById('launchWorkspaceBtn');
+  const closeButton = document.getElementById('closeWorkspaceBtn');
+  const activeButton = action === 'launch' ? launchButton : closeButton;
+  launchButton.disabled = true;
+  closeButton.disabled = true;
+  try {
+    const status = await getFreshWorkspaceStatusSnapshot(targets);
+    const profileIds = targets.map((profile) => profile.id);
+    const targetIds = action === 'launch'
+      ? profileIds.filter((profileId) => (
+        !status.runningIds.has(profileId) && !status.unknownIds.has(profileId)
+      ))
+      : filterCloseableProfileIds(profileIds, status.runningIds, status.retryableCloseIds);
+    if (targetIds.length === 0) {
+      showToast(action === 'launch' ? '工作区内没有可安全启动的配置' : '工作区内没有可安全关闭的配置', 'info');
+      return;
+    }
+
+    targetIds.forEach((profileId) => busyProfiles.add(profileId));
+    renderProfiles();
+    const results = await mapWithConcurrency(targetIds, 4, async (profileId) => {
+      try {
+        return action === 'launch'
+          ? await window.browserAPI.launchBrowser(profileId)
+          : await window.browserAPI.closeBrowser(profileId);
+      } catch (error) {
+        return { success: false, error: error?.message || '请求失败' };
+      }
+    }, (completed, total) => {
+      activeButton.textContent = `${action === 'launch' ? '启动' : '关闭'}中 ${completed}/${total}`;
+    });
+
+    targetIds.forEach((profileId) => busyProfiles.delete(profileId));
+    await refreshAllStatuses().catch(() => {});
+    renderProfiles();
+    showBatchResult(action === 'launch' ? '启动' : '关闭', results);
+  } finally {
+    targets.forEach((profile) => busyProfiles.delete(profile.id));
+    launchButton.disabled = false;
+    closeButton.disabled = false;
+    launchButton.textContent = '启动工作区';
+    closeButton.textContent = '关闭工作区';
+    updateVisibleStatusCards();
+  }
+}
+
 document.getElementById('profilesList').addEventListener('click', (event) => {
   const button = event.target.closest('[data-profile-action]');
   if (!button) {
     const card = event.target.closest('.profile-card');
-    if (card && !event.target.closest('input') && !event.target.closest('.checkbox-label')) {
+    if (card && shouldToggleProfileCardSelection(event.target) && !event.target.closest('.checkbox-label')) {
       toggleProfileSelection(card.dataset.id);
     }
     return;
@@ -225,6 +432,7 @@ document.getElementById('profilesList').addEventListener('click', (event) => {
     clone: cloneProfile,
     'refresh-status': refreshUnknownStatus,
     'forget-process': forgetProcess,
+    'toggle-favorite': toggleProfileFavorite,
     rename: renameProfile,
     delete: deleteProfile
   };
@@ -240,6 +448,12 @@ document.getElementById('profilesList').addEventListener('change', (event) => {
   if (event.target.matches('.profile-checkbox')) {
     event.stopPropagation();
     toggleProfileSelection(event.target.dataset.id);
+  }
+  if (event.target.matches('[data-profile-workspace-id]')) {
+    void assignProfileWorkspace(
+      event.target.dataset.profileWorkspaceId,
+      event.target.value || null,
+    );
   }
 });
 
@@ -961,6 +1175,178 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
     renderProfiles();
   });
 });
+
+document.getElementById('workspaceFilters').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-workspace-filter]');
+  if (button) setWorkspaceFilter(button.dataset.workspaceFilter);
+});
+
+document.getElementById('launchWorkspaceBtn').addEventListener('click', () => {
+  void runWorkspaceBatch('launch');
+});
+
+document.getElementById('closeWorkspaceBtn').addEventListener('click', () => {
+  void runWorkspaceBatch('close');
+});
+
+function closeWorkspaceModal() {
+  document.getElementById('workspaceModal').classList.remove('show');
+}
+
+function closeWorkspaceRenameModal() {
+  document.getElementById('workspaceRenameModal').classList.remove('show');
+  currentWorkspaceId = null;
+}
+
+function closeWorkspaceDeleteModal() {
+  document.getElementById('workspaceDeleteModal').classList.remove('show');
+  currentWorkspaceId = null;
+}
+
+document.getElementById('openWorkspaceModal').addEventListener('click', () => {
+  document.getElementById('workspaceName').value = '';
+  renderWorkspaceModalList();
+  document.getElementById('workspaceModal').classList.add('show');
+  document.getElementById('workspaceName').focus();
+});
+
+document.getElementById('cancelWorkspace').addEventListener('click', closeWorkspaceModal);
+
+document.getElementById('workspaceModal').addEventListener('click', (event) => {
+  if (event.target.id === 'workspaceModal') closeWorkspaceModal();
+});
+
+document.getElementById('workspaceForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const input = document.getElementById('workspaceName');
+  const name = input.value.trim();
+  if (!name) return;
+  const submit = event.currentTarget.querySelector('[type="submit"]');
+  submit.disabled = true;
+  try {
+    const result = await window.browserAPI.createWorkspace(name);
+    if (!result?.success || !result.workspace) {
+      showToast(`新建工作区失败：${result?.error || '请求失败'}`, 'error');
+      return;
+    }
+    workspaces = [...workspaces, result.workspace];
+    input.value = '';
+    renderWorkspaceModalList();
+    renderProfiles();
+    showToast(`已新建工作区“${result.workspace.name}”`, 'success');
+  } catch (error) {
+    showToast(`新建工作区失败：${error?.message || '请求失败'}`, 'error');
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+document.getElementById('workspaceModalList').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-workspace-action]');
+  if (!button) return;
+  const workspace = getWorkspaceById(button.dataset.workspaceId);
+  if (!workspace) return;
+  currentWorkspaceId = workspace.id;
+  if (button.dataset.workspaceAction === 'rename') {
+    document.getElementById('newWorkspaceName').value = workspace.name;
+    document.getElementById('workspaceRenameModal').classList.add('show');
+    document.getElementById('newWorkspaceName').focus();
+    return;
+  }
+  document.getElementById('workspaceDeleteMessage').textContent = `删除“${workspace.name}”后，其中的配置会保留并变为未分组。`;
+  document.getElementById('workspaceDeleteModal').classList.add('show');
+});
+
+document.getElementById('workspaceRenameForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const workspace = getWorkspaceById(currentWorkspaceId);
+  const name = document.getElementById('newWorkspaceName').value.trim();
+  if (!workspace || !name) return;
+  const submit = event.currentTarget.querySelector('[type="submit"]');
+  submit.disabled = true;
+  try {
+    const result = await window.browserAPI.renameWorkspace(workspace.id, name);
+    if (!result?.success || !result.workspace) {
+      showToast(`重命名工作区失败：${result?.error || '请求失败'}`, 'error');
+      return;
+    }
+    workspaces = workspaces.map((item) => item.id === workspace.id ? result.workspace : item);
+    closeWorkspaceRenameModal();
+    renderWorkspaceModalList();
+    renderProfiles();
+    showToast(`工作区已重命名为“${result.workspace.name}”`, 'success');
+  } catch (error) {
+    showToast(`重命名工作区失败：${error?.message || '请求失败'}`, 'error');
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+document.getElementById('cancelWorkspaceRename').addEventListener('click', closeWorkspaceRenameModal);
+document.getElementById('workspaceRenameModal').addEventListener('click', (event) => {
+  if (event.target.id === 'workspaceRenameModal') closeWorkspaceRenameModal();
+});
+
+document.getElementById('confirmWorkspaceDelete').addEventListener('click', async () => {
+  const workspace = getWorkspaceById(currentWorkspaceId);
+  if (!workspace) return;
+  const confirmButton = document.getElementById('confirmWorkspaceDelete');
+  confirmButton.disabled = true;
+  try {
+    const result = await window.browserAPI.deleteWorkspace(workspace.id);
+    if (!result?.success) {
+      showToast(`删除工作区失败：${result?.error || '请求失败'}`, 'error');
+      return;
+    }
+    workspaces = workspaces.filter((item) => item.id !== workspace.id);
+    const { profiles } = profileState.getSnapshot();
+    profileState.setProfiles(profiles.map((profile) => (
+      profile.workspaceId === workspace.id ? { ...profile, workspaceId: null } : profile
+    )));
+    profileState.setFilter('all');
+    closeWorkspaceDeleteModal();
+    renderWorkspaceModalList();
+    renderProfiles();
+    showToast('工作区已删除，配置已保留为未分组', 'success');
+  } catch (error) {
+    showToast(`删除工作区失败：${error?.message || '请求失败'}`, 'error');
+  } finally {
+    confirmButton.disabled = false;
+  }
+});
+
+document.getElementById('cancelWorkspaceDelete').addEventListener('click', closeWorkspaceDeleteModal);
+document.getElementById('workspaceDeleteModal').addEventListener('click', (event) => {
+  if (event.target.id === 'workspaceDeleteModal') closeWorkspaceDeleteModal();
+});
+
+const sortMode = document.getElementById('sortMode');
+const validSortModes = new Set(['name', 'created-desc', 'recent-desc', 'status']);
+
+function loadSortMode() {
+  let savedSortMode = null;
+  try {
+    savedSortMode = localStorage.getItem('sortMode');
+  } catch {
+    // Storage can be disabled; keep the default without surfacing an app error.
+  }
+  const nextSortMode = validSortModes.has(savedSortMode) ? savedSortMode : 'name';
+  profileState.setSort(nextSortMode);
+  sortMode.value = nextSortMode;
+}
+
+sortMode.addEventListener('change', () => {
+  const nextSortMode = validSortModes.has(sortMode.value) ? sortMode.value : 'name';
+  profileState.setSort(nextSortMode);
+  try {
+    localStorage.setItem('sortMode', nextSortMode);
+  } catch {
+    // Sorting remains available even when storage is unavailable.
+  }
+  renderProfiles();
+});
+
+loadSortMode();
 
 document.getElementById('exportProfilesBtn')?.addEventListener('click', async () => {
   try {

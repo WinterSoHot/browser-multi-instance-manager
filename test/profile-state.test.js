@@ -115,3 +115,26 @@ test('visible profiles apply the selected sort to the current status snapshot', 
     ['running', 'unknown', 'stopped'],
   );
 });
+
+test('workspace filters show only their matching profiles and clear hidden selections', () => {
+  const state = createProfileState({
+    profiles: [
+      { id: 'favorite', browserType: 'chrome', name: 'Favorite', favorite: true, workspaceId: 'w1' },
+      { id: 'unassigned', browserType: 'firefox', name: 'Unassigned', favorite: false, workspaceId: null },
+      { id: 'workspace', browserType: 'edge', name: 'Workspace', favorite: false, workspaceId: 'w2' },
+    ],
+  });
+  state.toggleSelection('favorite');
+  state.toggleSelection('unassigned');
+
+  state.setFilter('favorites');
+  assert.deepEqual(state.getVisibleProfiles().map((profile) => profile.id), ['favorite']);
+  assert.deepEqual(state.getSnapshot().selectedIds, ['favorite']);
+
+  state.setFilter('unassigned');
+  assert.deepEqual(state.getVisibleProfiles().map((profile) => profile.id), ['unassigned']);
+  assert.deepEqual(state.getSnapshot().selectedIds, []);
+
+  state.setFilter('workspace:w2');
+  assert.deepEqual(state.getVisibleProfiles().map((profile) => profile.id), ['workspace']);
+});

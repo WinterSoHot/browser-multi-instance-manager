@@ -101,8 +101,17 @@
 
   function filterProfiles(profiles, browserType = 'all', query = '') {
     const normalizedQuery = String(query).trim().toLocaleLowerCase();
+    const workspaceId = typeof browserType === 'string' && browserType.startsWith('workspace:')
+      ? browserType.slice('workspace:'.length)
+      : null;
     return profiles.filter((profile) => (
-      (browserType === 'all' || profile.browserType === browserType)
+      (
+        browserType === 'all'
+        || profile.browserType === browserType
+        || (browserType === 'favorites' && profile.favorite === true)
+        || (browserType === 'unassigned' && profile.workspaceId == null)
+        || (workspaceId !== null && profile.workspaceId === workspaceId)
+      )
       && (
         normalizedQuery === ''
         || profile.name.toLocaleLowerCase().includes(normalizedQuery)
@@ -194,6 +203,10 @@
       || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(tagName);
   }
 
+  function shouldToggleProfileCardSelection(target) {
+    return !isEditableTarget(target);
+  }
+
   async function mapWithConcurrency(items, limit, worker, onProgress = () => {}) {
     if (!Number.isSafeInteger(limit) || limit < 1) {
       throw new Error('Concurrency limit must be a positive integer');
@@ -271,6 +284,7 @@
     retainVisibleSelection,
     sortProfiles,
     isEditableTarget,
+    shouldToggleProfileCardSelection,
     mapWithConcurrency,
     normalizeStatusSnapshot,
     createStatusMembership,
