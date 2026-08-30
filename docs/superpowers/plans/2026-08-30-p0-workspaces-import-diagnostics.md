@@ -27,10 +27,11 @@
 - Create: `test/workspace-service.test.js`
 - Modify: `lib/app-store.js`
 - Modify: `lib/ipc-handlers.js`
+- Modify: `main.js`
 - Modify: `preload.js`
 
 **Interfaces:**
-- Produces: `createWorkspaceService({ appStore, randomUUID, now })` with `list()`, `create({ name })`, `rename({ workspaceId, name })`, `remove({ workspaceId })`, `assign({ profileId, workspaceId })`, and `setFavorite({ profileId, favorite })`.
+- Produces: `createWorkspaceService({ appStore, profileOperations, randomUUID, now })` with `list()`, `create({ name })`, `rename({ workspaceId, name })`, `remove({ workspaceId })`, `assign({ profileId, workspaceId })`, and `setFavorite({ profileId, favorite })`.
 
 - [ ] **Step 1: Add failing lifecycle tests**
 
@@ -50,18 +51,18 @@ Expected: FAIL because the service is missing.
 
 - [ ] **Step 3: Implement validation and atomic store updates**
 
-Workspace names use the profile-name trimming, length, and case-insensitive uniqueness principles but never form filesystem paths. `assign` accepts `null` for ungrouping and rejects unknown IDs. `setFavorite` accepts only a boolean.
+Workspace names use the profile-name trimming, length, and case-insensitive uniqueness principles but never form filesystem paths. `assign` accepts `null` for ungrouping and rejects unknown IDs. `setFavorite` accepts only a boolean. Route all workspace and profile metadata mutations through the shared global profile-operation coordinator so they cannot overwrite concurrent profile changes.
 
 - [ ] **Step 4: Register narrow IPC APIs**
 
-Add `get-workspaces`, `create-workspace`, `rename-workspace`, `delete-workspace`, `assign-profile-workspace`, and `set-profile-favorite` to IPC and `window.browserAPI`.
+Construct the service in `main.js`. Add `get-workspaces`, `create-workspace`, `rename-workspace`, `delete-workspace`, `assign-profile-workspace`, and `set-profile-favorite` to IPC and `window.browserAPI`.
 
 - [ ] **Step 5: Verify and commit**
 
 Run: `node --test test/workspace-service.test.js test/ipc-handlers.test.js && npm test`
 
 ```bash
-git add lib/workspace-service.js lib/app-store.js lib/ipc-handlers.js preload.js test/workspace-service.test.js test/ipc-handlers.test.js
+git add lib/workspace-service.js lib/app-store.js lib/ipc-handlers.js main.js preload.js test/workspace-service.test.js test/ipc-handlers.test.js
 git commit -m "新增工作区与收藏服务"
 ```
 
