@@ -1,15 +1,43 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
+const { refreshDiagnosticsModalAfterAction } = require('../renderer/diagnostics-view');
 
-test('diagnostics modal traps keyboard focus and suppresses page shortcuts while it is open', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.js'), 'utf8');
+test('diagnostic action refreshes and restores focus only while its modal remains active', async () => {
+  const calls = [];
+  const active = { profileId: 'profile-1', open: true };
 
-  assert.match(source, /function focusDiagnosticsModal\(/u);
-  assert.match(source, /function trapDiagnosticsModalFocus\(/u);
-  assert.match(source, /function restoreDiagnosticsFocus\(/u);
-  assert.match(source, /event\.key === 'Escape'/u);
-  assert.match(source, /event\.key === 'Tab'/u);
-  assert.match(source, /event\.stopImmediatePropagation\(\)/u);
+  assert.equal(await refreshDiagnosticsModalAfterAction({
+    profileId: 'profile-1',
+    requestDiagnostics: async () => { calls.push('request'); },
+    getOpenProfileId: () => active.profileId,
+    isModalOpen: () => active.open,
+    renderProfiles: () => { calls.push('profiles'); },
+    renderDiagnosticsModal: () => { calls.push('modal'); },
+    focusDiagnosticsModal: () => { calls.push('focus'); },
+  }), true);
+  assert.deepEqual(calls, ['request', 'profiles', 'modal', 'focus']);
+});
+
+test('diagnostic action does not steal focus after its modal closes or switches profile', async () => {
+  for (const changeActiveState of [
+    (active) => { active.open = false; },
+    (active) => { active.profileId = 'profile-2'; },
+  ]) {
+    const calls = [];
+    const active = { profileId: 'profile-1', open: true };
+
+    assert.equal(await refreshDiagnosticsModalAfterAction({
+      profileId: 'profile-1',
+      requestDiagnostics: async () => { calls.push('request'); },
+      getOpenProfileId: () => active.profileId,
+      isModalOpen: () => active.open,
+      renderProfiles: () => { calls.push('profiles'); },
+      renderDiagnosticsModal: () => {
+        calls.push('modal');
+        changeActiveState(active);
+      },
+      focusDiagnosticsModal: () => { calls.push('focus'); },
+    }), false);
+    assert.deepEqual(calls, ['request', 'profiles', 'modal']);
+  }
 });

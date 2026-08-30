@@ -62,6 +62,24 @@
     return { getInitialFocusTarget, getNextFocusTarget };
   }
 
+  async function refreshDiagnosticsModalAfterAction({
+    profileId,
+    requestDiagnostics,
+    getOpenProfileId,
+    isModalOpen,
+    renderProfiles,
+    renderDiagnosticsModal,
+    focusDiagnosticsModal,
+  }) {
+    await requestDiagnostics(profileId);
+    if (getOpenProfileId() !== profileId || !isModalOpen()) return false;
+    renderProfiles();
+    renderDiagnosticsModal(profileId);
+    if (getOpenProfileId() !== profileId || !isModalOpen()) return false;
+    focusDiagnosticsModal();
+    return true;
+  }
+
   function createDiagnosticsViewState() {
     let requestNumber = 0;
     const latestRequests = new Map();
@@ -103,6 +121,7 @@
   return {
     createDiagnosticsViewState,
     createModalFocusManager,
+    refreshDiagnosticsModalAfterAction,
     getDiagnosticBadge,
     sanitizeDiagnostic,
   };

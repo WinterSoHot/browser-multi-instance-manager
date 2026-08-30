@@ -32,7 +32,7 @@ function loadMainWithFakes() {
     app: {
       whenReady: () => new Promise(() => {}),
       on() {},
-      getPath: () => path.join(path.sep, 'app-data'),
+      getPath: () => path.resolve(path.sep, 'app-data'),
     },
     BrowserWindow: {
       getAllWindows: () => [],

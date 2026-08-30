@@ -26,6 +26,7 @@ const {
 const {
   createDiagnosticsViewState,
   createModalFocusManager,
+  refreshDiagnosticsModalAfterAction,
   getDiagnosticBadge,
 } = window.diagnosticsView;
 
@@ -556,6 +557,10 @@ function focusDiagnosticsModal() {
   if (target && typeof target.focus === 'function') target.focus();
 }
 
+function isDiagnosticsModalOpen() {
+  return document.getElementById('diagnosticsModal').classList.contains('show');
+}
+
 function trapDiagnosticsModalFocus(event) {
   const modal = document.getElementById('diagnosticsModal');
   if (!modal.classList.contains('show')) return false;
@@ -646,10 +651,15 @@ async function performDiagnosticAction(action) {
       showToast('已重新创建空配置目录', 'success');
     }
   }
-  await requestDiagnostics(profileId);
-  if (diagnosticsModalProfileId !== profileId) return;
-  renderProfiles();
-  renderDiagnosticsModal(profileId);
+  await refreshDiagnosticsModalAfterAction({
+    profileId,
+    requestDiagnostics,
+    getOpenProfileId: () => diagnosticsModalProfileId,
+    isModalOpen: isDiagnosticsModalOpen,
+    renderProfiles,
+    renderDiagnosticsModal,
+    focusDiagnosticsModal,
+  });
 }
 
 document.getElementById('diagnosticsModal').addEventListener('click', (event) => {

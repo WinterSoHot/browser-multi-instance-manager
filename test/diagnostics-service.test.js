@@ -4,8 +4,8 @@ const path = require('node:path');
 
 const { createDiagnosticsService } = require('../lib/diagnostics-service');
 
-const profilesDir = path.join(path.sep, 'app-data', 'profiles');
-const executablePath = path.join(path.sep, 'Applications', 'Google Chrome');
+const profilesDir = path.resolve(path.sep, 'app-data', 'profiles');
+const executablePath = path.resolve(path.sep, 'Applications', 'Google Chrome');
 const profilePath = (name = 'Work') => path.join(profilesDir, 'chrome', name);
 
 function createFixture(options = {}) {
@@ -153,7 +153,7 @@ test('repair refuses a profile whose stored path is outside the controlled profi
       id: 'profile-1',
       browserType: 'chrome',
       name: 'Work',
-      path: path.join(path.sep, 'private', 'untrusted'),
+      path: path.resolve(path.sep, 'private', 'untrusted'),
     },
     directoryExists: false,
   });
@@ -182,6 +182,26 @@ test('repair converts an invalid stored profile name into a stable path code', a
     code: 'PROFILE_PATH_INVALID',
   });
   assert.deepEqual(calls.getStatus, []);
+  assert.deepEqual(calls.createDirectory, []);
+});
+
+test('inspection rejects a normalized-but-not-exact stored path representation without checking it', async () => {
+  const { service, calls } = createFixture({
+    profile: {
+      id: 'profile-1',
+      browserType: 'chrome',
+      name: 'Work',
+      path: `${path.join(profilesDir, 'chrome')}${path.sep}..${path.sep}chrome${path.sep}Work`,
+    },
+    directoryExists: false,
+  });
+
+  assert.deepEqual(await service.inspect('profile-1'), {
+    code: 'PROFILE_PATH_INVALID',
+    state: 'profile-directory-missing',
+    actions: ['retry'],
+  });
+  assert.deepEqual(calls.pathExists, [executablePath]);
   assert.deepEqual(calls.createDirectory, []);
 });
 
@@ -218,7 +238,7 @@ test('repair re-reads the profile, checks the missing directory again, and accep
 
   const mismatch = createFixture({
     directoryExists: false,
-    createResult: path.join(path.sep, 'wrong', 'path'),
+    createResult: path.resolve(path.sep, 'wrong', 'path'),
   });
   assert.deepEqual(await mismatch.service.repairMissingDirectory('profile-1'), {
     success: false,
@@ -246,7 +266,7 @@ test('repair reports a stable failure when the directory appears after the pre-c
 
   assert.deepEqual(await service.repairMissingDirectory('profile-1'), {
     success: false,
-    code: 'DIRECTORY_CREATE_FAILED',
+    code: 'DIRECTORY_PRESENT',
   });
   assert.deepEqual(calls.createDirectory, [{ browserType: 'chrome', profileName: 'Work' }]);
 });
@@ -263,12 +283,12 @@ test('repair returns stable failures without raw filesystem errors', async () =>
     getProfilesDir: () => profilesDir,
     pathExists: async () => false,
     createEmptyProfileDir: async () => {
-      throw new Error(`${path.join(path.sep, 'private', 'secret')} permission denied`);
+      throw new Error(`${path.resolve(path.sep, 'private', 'secret')} permission denied`);
     },
   }).repairMissingDirectory('profile-1');
 
   assert.deepEqual(result, { success: false, code: 'DIRECTORY_CREATE_FAILED' });
-  assert.equal(JSON.stringify(result).includes(path.join(path.sep, 'private', 'secret')), false);
+  assert.equal(JSON.stringify(result).includes(path.resolve(path.sep, 'private', 'secret')), false);
   assert.ok(service);
 });
 
@@ -279,7 +299,7 @@ test('service outer boundaries convert store, directory, and coordinator failure
     actions: ['retry'],
   };
   const inspectService = createDiagnosticsService({
-    appStore: { getProfiles: () => { throw path.join(path.sep, 'private', 'store'); } },
+    appStore: { getProfiles: () => { throw path.resolve(path.sep, 'private', 'store'); } },
   });
   assert.deepEqual(await inspectService.inspect('profile-1'), unavailable);
   assert.deepEqual(await createDiagnosticsService({
@@ -299,7 +319,7 @@ test('service outer boundaries convert store, directory, and coordinator failure
     getProfilesDir: () => { throw new Error('secret directory'); },
     pathExists: async () => true,
     profileOperations: {
-      runMutation: () => Promise.reject({ raw: path.join(path.sep, 'private', 'queue') }),
+      runMutation: () => Promise.reject({ raw: path.resolve(path.sep, 'private', 'queue') }),
     },
   });
   assert.deepEqual(await directoryService.inspect('profile-1'), unavailable);

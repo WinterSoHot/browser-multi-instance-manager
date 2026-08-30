@@ -4,7 +4,7 @@ const path = require('node:path');
 
 const { registerIpcHandlers } = require('../lib/ipc-handlers');
 
-const privatePath = path.join(path.sep, 'private', 'path');
+const privatePath = path.resolve(path.sep, 'private', 'path');
 
 const expectedChannels = [
   'get-profiles',
@@ -236,7 +236,7 @@ test('process IPC validates bulk IDs and forwards optional forced snapshots', as
 });
 
 test('settings IPC delegates payloads and forwards environment results', async () => {
-  const settings = { chrome: path.join(path.sep, 'Applications', 'Google Chrome.app') };
+  const settings = { chrome: path.resolve(path.sep, 'Applications', 'Google Chrome.app') };
   const environment = {
     platform: 'darwin',
     settings,
@@ -393,7 +393,7 @@ test('import IPC accepts only an opaque token and duplicate-row skip or rename d
   }]);
   assert.deepEqual(await handlers.get('execute-import')({}, {
     token: 'a'.repeat(64),
-    decisions: [{ line: 2, action: 'rename', path: path.join(path.sep, 'private') }],
+    decisions: [{ line: 2, action: 'rename', path: path.resolve(path.sep, 'private') }],
   }), { success: false, code: 'IMPORT_REQUEST_INVALID' });
 });
 
@@ -401,7 +401,7 @@ test('import IPC never forwards a service exception or raw system detail', async
   const { handlers } = createHandlerFixture({
     profileService: {
       previewImportMetadata: async () => {
-        throw new Error(path.join(path.sep, 'private', 'imports', 'profiles.json'));
+        throw new Error(path.resolve(path.sep, 'private', 'imports', 'profiles.json'));
       },
       executeImport: async () => { throw new Error('native failure'); },
     },
