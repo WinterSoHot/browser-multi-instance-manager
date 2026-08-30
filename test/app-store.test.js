@@ -7,6 +7,7 @@ const {
   migrateStoreData,
   validateAppSettings,
   validateAppSettingsPatch,
+  validateUpdateCheckCache,
 } = require('../lib/app-store');
 
 const legacyProfile = {
@@ -73,7 +74,32 @@ test('migrates legacy data without changing profile identity or paths', () => {
 
 test('migration is idempotent', () => {
   const once = migrateStoreData(legacyData);
+  assert.equal(once.updateCheckCache, null);
   assert.deepEqual(migrateStoreData(once), once);
+});
+
+test('update-check cache migration preserves only the minimal valid shape', () => {
+  const cache = {
+    checkedAt: 1_000,
+    checkedVersion: '1.3.1',
+    result: {
+      status: 'available',
+      version: '1.4.0',
+      releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0',
+    },
+  };
+  const migrated = migrateStoreData({ updateCheckCache: cache });
+
+  assert.deepEqual(migrated.updateCheckCache, cache);
+  assert.deepEqual(validateUpdateCheckCache({
+    checkedAt: 2_000,
+    checkedVersion: '1.3.1',
+    result: { status: 'current' },
+  }), {
+    checkedAt: 2_000,
+    checkedVersion: '1.3.1',
+    result: { status: 'current' },
+  });
 });
 
 test('app settings migrate close-to-tray to a true default and stay idempotent', () => {
@@ -123,6 +149,7 @@ test('adapter leaves a current snapshot unwritten', () => {
     browserSettings: {},
     runningBrowserProcesses: [],
     appSettings: { closeToTray: true },
+    updateCheckCache: null,
   };
   const store = createStore(migrated);
 
@@ -141,6 +168,10 @@ test('adapter rejects malformed present collections and settings without writing
     { ...legacyData, appSettings: [] },
     { ...legacyData, appSettings: { closeToTray: 'yes' } },
     { ...legacyData, appSettings: { unknown: true } },
+    { ...legacyData, updateCheckCache: { checkedAt: -1, checkedVersion: '1.3.1', result: { status: 'current' } } },
+    { ...legacyData, updateCheckCache: { checkedAt: 1, checkedVersion: 'v1.3.1', result: { status: 'current' } } },
+    { ...legacyData, updateCheckCache: { checkedAt: 1, checkedVersion: '1.3.1', result: { status: 'current', extra: true } } },
+    { ...legacyData, updateCheckCache: { checkedAt: 1, checkedVersion: '1.3.1', result: { status: 'available', version: '1.4.0', releaseUrl: 'https://evil.example' } } },
   ];
 
   for (const snapshot of invalidSnapshots) {
@@ -275,6 +306,42 @@ test('runtime app settings writes validate before persisting', () => {
   assert.throws(() => appStore.setAppSettings({ closeToTray: 'false' }), /Invalid app settings/u);
   assert.throws(() => appStore.setAppSettings({ closeToTray: true, extra: true }), /Invalid app settings/u);
   assert.deepEqual(store.getData().appSettings, { closeToTray: false });
+});
+
+test('runtime update-check cache writes validate and return defensive copies', () => {
+  const store = createStore(migrateStoreData(legacyData));
+  const appStore = createAppStore(store);
+  const cache = {
+    checkedAt: 1_000,
+    checkedVersion: '1.3.1',
+    result: {
+      status: 'available',
+      version: '1.4.0',
+      releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0',
+    },
+  };
+
+  appStore.setUpdateCheckCache(cache);
+  cache.result.version = '9.9.9';
+  assert.equal(appStore.getUpdateCheckCache().result.version, '1.4.0');
+  const returned = appStore.getUpdateCheckCache();
+  returned.result.status = 'current';
+  assert.equal(appStore.getUpdateCheckCache().result.status, 'available');
+  const hiddenCache = appStore.getUpdateCheckCache();
+  Object.defineProperty(hiddenCache.result, 'hidden', { value: true });
+  const symbolCache = appStore.getUpdateCheckCache();
+  symbolCache.result[Symbol('hidden')] = true;
+
+  for (const invalidCache of [
+    { ...appStore.getUpdateCheckCache(), extra: true },
+    { ...appStore.getUpdateCheckCache(), result: { status: 'current', extra: true } },
+    { ...appStore.getUpdateCheckCache(), result: { status: 'available', version: '1.4.0', releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0', extra: true } },
+    hiddenCache,
+    symbolCache,
+  ]) {
+    assert.throws(() => appStore.setUpdateCheckCache(invalidCache), /Invalid update check cache/u);
+  }
+  assert.equal(appStore.getUpdateCheckCache().result.status, 'available');
 });
 
 test('adapter rejects unsupported future schema versions without writing', () => {
