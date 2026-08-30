@@ -9,6 +9,7 @@ const {
 } = require("./lib/browser-paths");
 const { BrowserProcessManager } = require("./lib/browser-process-manager");
 const { createAsyncQueue } = require("./lib/async-queue");
+const { createAppStore } = require("./lib/app-store");
 const {
   createProfileOperationCoordinator,
 } = require("./lib/profile-operation-coordinator");
@@ -45,6 +46,7 @@ const store = new Store({
     runningBrowserProcesses: [],
   },
 });
+const appStore = createAppStore(store);
 const profileOperations = createProfileOperationCoordinator();
 const enqueueSettingsMutation = createAsyncQueue();
 
@@ -54,7 +56,7 @@ const browserProcessManager = new BrowserProcessManager({
   verifyProcesses: inspectBrowserProcesses,
   terminateLaunchedProcess: terminateLaunchedProcessTree,
   onStateChange(records) {
-    store.set("runningBrowserProcesses", records);
+    appStore.setRunningProcesses(records);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("browser-statuses-changed");
     }
@@ -488,8 +490,8 @@ const initializationPromise = app.whenReady().then(async () => {
   await fsp.mkdir(profilesDir, { recursive: true });
   const persistedProcesses = filterRestorableProcessRecords(
     profilesDir,
-    store.get("profiles", []),
-    store.get("runningBrowserProcesses", []),
+    appStore.getProfiles(),
+    appStore.getRunningProcesses(),
   );
   await browserProcessManager.restore(persistedProcesses);
 });
