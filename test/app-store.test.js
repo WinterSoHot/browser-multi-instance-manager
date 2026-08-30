@@ -344,6 +344,77 @@ test('runtime update-check cache writes validate and return defensive copies', (
   assert.equal(appStore.getUpdateCheckCache().result.status, 'available');
 });
 
+test('update-check cache accepts only enumerable own data fields without invoking accessors', () => {
+  const validCache = {
+    checkedAt: 1_000,
+    checkedVersion: '1.3.1',
+    result: { status: 'current' },
+  };
+
+  for (const key of ['checkedAt', 'checkedVersion', 'result']) {
+    const cache = { ...validCache };
+    Object.defineProperty(cache, key, { value: validCache[key], enumerable: false });
+    assert.throws(() => validateUpdateCheckCache(cache), /Invalid update check cache/u);
+  }
+  for (const result of [
+    Object.defineProperty({}, 'status', { value: 'current', enumerable: false }),
+    ...['status', 'version', 'releaseUrl'].map((key) => {
+      const available = {
+        status: 'available',
+        version: '1.4.0',
+        releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0',
+      };
+      Object.defineProperty(available, key, { value: available[key], enumerable: false });
+      return available;
+    }),
+  ]) {
+    assert.throws(
+      () => validateUpdateCheckCache({ ...validCache, result }),
+      /Invalid update check cache/u,
+    );
+  }
+
+  const getterCases = [
+    () => {
+      const cache = { ...validCache };
+      Object.defineProperty(cache, 'checkedAt', {
+        enumerable: true,
+        get() { throw new Error('checkedAt getter must not run'); },
+      });
+      return cache;
+    },
+    () => {
+      const cache = { ...validCache };
+      Object.defineProperty(cache, 'result', {
+        enumerable: true,
+        get() { throw new Error('result getter must not run'); },
+      });
+      return cache;
+    },
+    () => ({
+      ...validCache,
+      result: Object.defineProperty({}, 'status', {
+        enumerable: true,
+        get() { throw new Error('status getter must not run'); },
+      }),
+    }),
+    () => ({
+      ...validCache,
+      result: Object.defineProperty({
+        status: 'available',
+        releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0',
+      }, 'version', {
+        enumerable: true,
+        get() { throw new Error('version getter must not run'); },
+      }),
+    }),
+  ];
+
+  for (const createCache of getterCases) {
+    assert.throws(() => validateUpdateCheckCache(createCache()), /Invalid update check cache/u);
+  }
+});
+
 test('adapter rejects unsupported future schema versions without writing', () => {
   const store = createStore({
     ...migrateStoreData(legacyData),

@@ -341,3 +341,68 @@ test('cache failures never suppress a network success and check options are stri
   assert.throws(() => checker.check({ force: 'yes' }), (error) => error?.code === 'INVALID_CHECK_OPTIONS');
   assert.throws(() => createChecker({ currentVersion: 'v1.3.1' }), (error) => error?.code === 'INVALID_CURRENT_VERSION');
 });
+
+test('cache readers reject hidden or accessor fields without executing getters', async () => {
+  const validEntry = cacheEntry(1_000, '1.3.1', { status: 'current' });
+  const hiddenEntry = { ...validEntry };
+  Object.defineProperty(hiddenEntry, 'checkedAt', { value: 1_000, enumerable: false });
+  const getterEntries = [
+    (() => {
+      const entry = { ...validEntry };
+      Object.defineProperty(entry, 'checkedAt', {
+        enumerable: true,
+        get() { throw new Error('checkedAt getter must not run'); },
+      });
+      return entry;
+    })(),
+    (() => {
+      const entry = { ...validEntry };
+      Object.defineProperty(entry, 'result', {
+        enumerable: true,
+        get() { throw new Error('result getter must not run'); },
+      });
+      return entry;
+    })(),
+    cacheEntry(1_000, '1.3.1', Object.defineProperty({}, 'status', {
+      enumerable: true,
+      get() { throw new Error('status getter must not run'); },
+    })),
+    cacheEntry(1_000, '1.3.1', Object.defineProperty({
+      status: 'available',
+      releaseUrl: RELEASE_URL,
+    }, 'version', {
+      enumerable: true,
+      get() { throw new Error('version getter must not run'); },
+    })),
+  ];
+
+  for (const cachedValue of [hiddenEntry, ...getterEntries]) {
+    let requests = 0;
+    const checker = createChecker({
+      cache: createCache(cachedValue),
+      requestLatestRelease: async () => {
+        requests += 1;
+        return release('1.4.0');
+      },
+    });
+    assert.deepEqual(await checker.check(), {
+      status: 'available', version: '1.4.0', releaseUrl: RELEASE_URL,
+    });
+    assert.equal(requests, 1);
+  }
+});
+
+test('check options reject hidden and getter-backed force fields without invoking getters', () => {
+  const checker = createChecker();
+  const hiddenForce = {};
+  Object.defineProperty(hiddenForce, 'force', { value: true, enumerable: false });
+  const getterForce = {};
+  Object.defineProperty(getterForce, 'force', {
+    enumerable: true,
+    get() { throw new Error('force getter must not run'); },
+  });
+
+  for (const options of [hiddenForce, getterForce]) {
+    assert.throws(() => checker.check(options), (error) => error?.code === 'INVALID_CHECK_OPTIONS');
+  }
+});
