@@ -8,8 +8,9 @@ function waitForMainTurn() {
   return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
 }
 
-async function loadMain({ profiles = [] } = {}) {
+async function loadMain({ profiles = [], platform = process.platform } = {}) {
   const originalLoad = Module._load;
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
   const mainPath = path.join(__dirname, '..', 'main.js');
   const windows = [];
   const dialogCalls = [];
@@ -154,10 +155,12 @@ async function loadMain({ profiles = [] } = {}) {
     return originalLoad.call(this, request, parent, isMain);
   };
   try {
+    Object.defineProperty(process, 'platform', { value: platform });
     delete require.cache[require.resolve(mainPath)];
     require(mainPath);
     await waitForMainTurn();
   } finally {
+    Object.defineProperty(process, 'platform', originalPlatform);
     Module._load = originalLoad;
     delete require.cache[require.resolve(mainPath)];
   }
@@ -200,4 +203,14 @@ test('main selects the dedicated tray template asset', async () => {
   const harness = await loadMain();
 
   assert.match(harness.iconPaths[0], /trayTemplate\.png$/u);
+});
+
+test('main chooses the template asset only on macOS and a separate icon on Windows and Linux', async () => {
+  const mac = await loadMain({ platform: 'darwin' });
+  const windows = await loadMain({ platform: 'win32' });
+  const linux = await loadMain({ platform: 'linux' });
+
+  assert.match(mac.iconPaths[0], /trayTemplate\.png$/u);
+  assert.match(windows.iconPaths[0], /trayIcon\.png$/u);
+  assert.match(linux.iconPaths[0], /trayIcon\.png$/u);
 });

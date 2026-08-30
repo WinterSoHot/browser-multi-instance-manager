@@ -234,7 +234,7 @@ async function showMainWindow() {
 }
 
 function createTrayIcon() {
-  const iconName = process.platform === "darwin" ? "trayTemplate.png" : "trayTemplate@2x.png";
+  const iconName = process.platform === "darwin" ? "trayTemplate.png" : "trayIcon.png";
   const icon = nativeImage.createFromPath(path.join(__dirname, "build", "icons", iconName));
   if (process.platform !== "darwin" || icon.isEmpty()) return icon;
   const trayIcon = icon.resize({ width: 16, height: 16 });

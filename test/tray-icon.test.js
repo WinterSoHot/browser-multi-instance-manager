@@ -40,7 +40,7 @@ function readPng(filePath) {
   return { header, scanlines: zlib.inflateSync(Buffer.concat(idat)) };
 }
 
-function alphaValues({ header, scanlines }) {
+function rgbaPixels({ header, scanlines }) {
   assert.equal(header.bitDepth, 8);
   assert.equal(header.colorType, 6, 'tray assets must retain RGBA transparency');
   const bytesPerPixel = 4;
@@ -62,7 +62,12 @@ function alphaValues({ header, scanlines }) {
     }
     sourceOffset += stride;
   }
-  return Array.from({ length: header.width * header.height }, (_, index) => output[index * 4 + 3]);
+  return output;
+}
+
+function alphaValues(image) {
+  const pixels = rgbaPixels(image);
+  return Array.from({ length: image.header.width * image.header.height }, (_, index) => pixels[index * 4 + 3]);
 }
 
 test('dedicated tray template PNGs are compact RGBA assets with transparent padding', () => {
@@ -77,4 +82,26 @@ test('dedicated tray template PNGs are compact RGBA assets with transparent padd
     assert.ok(alphas.some((alpha) => alpha === 0), `${name} must keep transparent padding`);
     assert.ok(alphas.some((alpha) => alpha > 0), `${name} must contain visible pixels`);
   }
+});
+
+test('non-template tray icon has transparent padding and high-contrast color detail', () => {
+  const image = readPng(path.join(iconDir, 'trayIcon.png'));
+  assert.deepEqual([image.header.width, image.header.height], [32, 32]);
+  const pixels = rgbaPixels(image);
+  const visible = [];
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    if (pixels[offset + 3] > 0) visible.push([pixels[offset], pixels[offset + 1], pixels[offset + 2]]);
+  }
+  const luminance = visible.map(([red, green, blue]) => (
+    0.2126 * red + 0.7152 * green + 0.0722 * blue
+  ));
+
+  assert.ok(visible.length > 0, 'trayIcon.png must contain visible pixels');
+  assert.ok(visible.length < 32 * 32, 'trayIcon.png must retain transparent padding');
+  assert.ok(new Set(visible.map((color) => color.join(','))).size >= 3,
+    'trayIcon.png must use more than a single monochrome color');
+  assert.ok(Math.min(...luminance) < 90 && Math.max(...luminance) > 180,
+    'trayIcon.png must include both dark and bright edges for panel contrast');
+  assert.ok(visible.some(([red, green, blue]) => Math.max(red, green, blue) - Math.min(red, green, blue) > 70),
+    'trayIcon.png must include a clearly colored, non-template body');
 });
