@@ -346,12 +346,21 @@ test('cache readers reject hidden or accessor fields without executing getters',
   const validEntry = cacheEntry(1_000, '1.3.1', { status: 'current' });
   const hiddenEntry = { ...validEntry };
   Object.defineProperty(hiddenEntry, 'checkedAt', { value: 1_000, enumerable: false });
+  const getterCalls = {
+    checkedAt: 0,
+    result: 0,
+    status: 0,
+    version: 0,
+  };
   const getterEntries = [
     (() => {
       const entry = { ...validEntry };
       Object.defineProperty(entry, 'checkedAt', {
         enumerable: true,
-        get() { throw new Error('checkedAt getter must not run'); },
+        get() {
+          getterCalls.checkedAt += 1;
+          return 1_000;
+        },
       });
       return entry;
     })(),
@@ -359,20 +368,29 @@ test('cache readers reject hidden or accessor fields without executing getters',
       const entry = { ...validEntry };
       Object.defineProperty(entry, 'result', {
         enumerable: true,
-        get() { throw new Error('result getter must not run'); },
+        get() {
+          getterCalls.result += 1;
+          return { status: 'current' };
+        },
       });
       return entry;
     })(),
     cacheEntry(1_000, '1.3.1', Object.defineProperty({}, 'status', {
       enumerable: true,
-      get() { throw new Error('status getter must not run'); },
+      get() {
+        getterCalls.status += 1;
+        return 'current';
+      },
     })),
     cacheEntry(1_000, '1.3.1', Object.defineProperty({
       status: 'available',
       releaseUrl: RELEASE_URL,
     }, 'version', {
       enumerable: true,
-      get() { throw new Error('version getter must not run'); },
+      get() {
+        getterCalls.version += 1;
+        return '1.4.0';
+      },
     })),
   ];
 
@@ -390,6 +408,12 @@ test('cache readers reject hidden or accessor fields without executing getters',
     });
     assert.equal(requests, 1);
   }
+  assert.deepEqual(getterCalls, {
+    checkedAt: 0,
+    result: 0,
+    status: 0,
+    version: 0,
+  });
 });
 
 test('check options reject hidden and getter-backed force fields without invoking getters', () => {
@@ -397,12 +421,17 @@ test('check options reject hidden and getter-backed force fields without invokin
   const hiddenForce = {};
   Object.defineProperty(hiddenForce, 'force', { value: true, enumerable: false });
   const getterForce = {};
+  let getterCalls = 0;
   Object.defineProperty(getterForce, 'force', {
     enumerable: true,
-    get() { throw new Error('force getter must not run'); },
+    get() {
+      getterCalls += 1;
+      return true;
+    },
   });
 
   for (const options of [hiddenForce, getterForce]) {
     assert.throws(() => checker.check(options), (error) => error?.code === 'INVALID_CHECK_OPTIONS');
   }
+  assert.equal(getterCalls, 0);
 });

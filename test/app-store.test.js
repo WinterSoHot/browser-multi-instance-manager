@@ -374,12 +374,21 @@ test('update-check cache accepts only enumerable own data fields without invokin
     );
   }
 
+  const getterCalls = {
+    checkedAt: 0,
+    result: 0,
+    status: 0,
+    version: 0,
+  };
   const getterCases = [
     () => {
       const cache = { ...validCache };
       Object.defineProperty(cache, 'checkedAt', {
         enumerable: true,
-        get() { throw new Error('checkedAt getter must not run'); },
+        get() {
+          getterCalls.checkedAt += 1;
+          return 1_000;
+        },
       });
       return cache;
     },
@@ -387,7 +396,10 @@ test('update-check cache accepts only enumerable own data fields without invokin
       const cache = { ...validCache };
       Object.defineProperty(cache, 'result', {
         enumerable: true,
-        get() { throw new Error('result getter must not run'); },
+        get() {
+          getterCalls.result += 1;
+          return { status: 'current' };
+        },
       });
       return cache;
     },
@@ -395,7 +407,10 @@ test('update-check cache accepts only enumerable own data fields without invokin
       ...validCache,
       result: Object.defineProperty({}, 'status', {
         enumerable: true,
-        get() { throw new Error('status getter must not run'); },
+        get() {
+          getterCalls.status += 1;
+          return 'current';
+        },
       }),
     }),
     () => ({
@@ -405,7 +420,10 @@ test('update-check cache accepts only enumerable own data fields without invokin
         releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0',
       }, 'version', {
         enumerable: true,
-        get() { throw new Error('version getter must not run'); },
+        get() {
+          getterCalls.version += 1;
+          return '1.4.0';
+        },
       }),
     }),
   ];
@@ -413,6 +431,12 @@ test('update-check cache accepts only enumerable own data fields without invokin
   for (const createCache of getterCases) {
     assert.throws(() => validateUpdateCheckCache(createCache()), /Invalid update check cache/u);
   }
+  assert.deepEqual(getterCalls, {
+    checkedAt: 0,
+    result: 0,
+    status: 0,
+    version: 0,
+  });
 });
 
 test('adapter rejects unsupported future schema versions without writing', () => {
