@@ -20,6 +20,12 @@
       </button>
     </header>
 
+    <section id="updateNotice" class="settings-section" hidden aria-live="polite">
+      <span id="updateNoticeText"></span>
+      <button id="openUpdateRelease" class="btn btn-primary btn-small" type="button">查看下载</button>
+      <button id="dismissUpdateNotice" class="btn btn-secondary btn-small" type="button">关闭</button>
+    </section>
+
     <main class="workspace-layout">
       <aside class="workspace-sidebar" aria-label="工作区筛选">
         <div class="workspace-sidebar-header">
@@ -223,6 +229,7 @@
   <script src="workspace-batch.js"></script>
   <script src="import-preview.js"></script>
   <script src="diagnostics-view.js"></script>
+  <script src="update-ui-controller.js"></script>
   <script src="index.js"></script>
 </body>
 </html>

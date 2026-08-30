@@ -119,8 +119,8 @@ function loadMainWithFakes() {
         createAppSettingsService(options) {
           serviceOptions.appSettings = options;
           return {
-            get: () => ({ closeToTray: false }),
-            set: () => ({ success: true, settings: { closeToTray: false } }),
+            get: () => ({ closeToTray: false, checkUpdatesOnStartup: true }),
+            set: () => ({ success: true, settings: { closeToTray: false, checkUpdatesOnStartup: true } }),
           };
         },
       };
@@ -174,5 +174,8 @@ test('main constructs app settings with the shared settings queue and injects it
   const { handlers, serviceOptions } = loadMainWithFakes();
 
   assert.equal(serviceOptions.appSettings.appStore, serviceOptions.profile.appStore);
-  assert.deepEqual(await handlers.get('get-app-settings')({}, undefined), { closeToTray: false });
+  assert.deepEqual(await handlers.get('get-app-settings')({}, undefined), {
+    closeToTray: false,
+    checkUpdatesOnStartup: true,
+  });
 });

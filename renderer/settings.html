@@ -58,6 +58,21 @@
       </div>
 
       <div class="form-group">
+        <label class="checkbox-label" for="checkUpdatesOnStartup">
+          <input id="checkUpdatesOnStartup" type="checkbox" disabled>
+          <span class="checkbox-custom"></span>
+          启动后检查更新
+        </label>
+      </div>
+
+      <div class="form-group">
+        <p>当前版本：<span id="appVersion">加载中</span></p>
+        <button id="checkForUpdates" class="btn btn-secondary" type="button" disabled>立即检查更新</button>
+        <p id="updateStatus" class="settings-description" role="status"></p>
+        <button id="openReleasePage" class="btn btn-primary" type="button" hidden>查看下载</button>
+      </div>
+
+      <div class="form-group">
         <label class="checkbox-label" for="closeToTray">
           <input id="closeToTray" type="checkbox" disabled>
           <span class="checkbox-custom"></span>
@@ -70,6 +85,8 @@
   <script src="view-utils.js"></script>
   <script src="app-settings-controller.js"></script>
   <script src="close-to-tray-binding.js"></script>
+  <script src="update-settings-binding.js"></script>
+  <script src="update-ui-controller.js"></script>
   <script src="settings.js"></script>
 </body>
 </html>

@@ -39,6 +39,8 @@ const {
 const { createWindowAfterInitialization } = require("./lib/window-lifecycle");
 const { createAppLifecycle } = require("./lib/app-lifecycle");
 const { createTrayManager } = require("./lib/tray-manager");
+const { createGithubReleaseClient } = require("./lib/github-release-client");
+const { createUpdateChecker, sanitizeUpdateResult } = require("./lib/update-checker");
 const {
   filterRestorableProcessRecords,
   resolveProfilePath,
@@ -52,7 +54,8 @@ const store = new Store({
     profiles: [],
     browserSettings: {},
     runningBrowserProcesses: [],
-    appSettings: { closeToTray: true },
+    appSettings: { closeToTray: true, checkUpdatesOnStartup: true },
+    updateCheckCache: null,
   },
 });
 const appStore = createAppStore(store);
@@ -61,6 +64,16 @@ const enqueueSettingsMutation = createAsyncQueue();
 
 let mainWindow;
 let trayManager;
+let automaticUpdateCheckStarted = false;
+const currentAppVersion = typeof app.getVersion === "function" ? app.getVersion() : "0.0.0";
+const updateChecker = createUpdateChecker({
+  currentVersion: currentAppVersion,
+  requestLatestRelease: createGithubReleaseClient(),
+  cache: {
+    get: () => appStore.getUpdateCheckCache(),
+    set: (cache) => appStore.setUpdateCheckCache(cache),
+  },
+});
 const browserProcessManager = new BrowserProcessManager({
   verifyProcess: inspectBrowserProcess,
   verifyProcesses: inspectBrowserProcesses,
@@ -195,6 +208,25 @@ function createWindow() {
 
   mainWindow = window;
   window.loadFile(path.join(__dirname, "renderer", "index.html"));
+  if (typeof window.webContents.once === "function") {
+    window.webContents.once("did-finish-load", () => {
+      if (automaticUpdateCheckStarted) return;
+      automaticUpdateCheckStarted = true;
+      let enabled = false;
+      try {
+        enabled = appStore.getAppSettings().checkUpdatesOnStartup !== false;
+      } catch {
+        return;
+      }
+      if (!enabled) return;
+      void Promise.resolve(updateChecker.check({ force: false })).then((result) => {
+        const safeResult = sanitizeUpdateResult(result, currentAppVersion);
+        if (window === mainWindow && !window.isDestroyed()) {
+          window.webContents.send("update-check-result", safeResult);
+        }
+      }).catch(() => {});
+    });
+  }
   window.on("close", (event) => {
     void appLifecycle.handleWindowClose(event);
   });
@@ -212,6 +244,9 @@ const unregisterIpcHandlers = registerIpcHandlers({
   appSettingsService,
   workspaceService,
   diagnosticsService,
+  updateChecker,
+  appVersion: currentAppVersion,
+  openExternal: shell.openExternal,
 });
 
 const initializationPromise = app.whenReady().then(async () => {

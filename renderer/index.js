@@ -1728,3 +1728,25 @@ document.getElementById('importProfilesBtn')?.addEventListener('click', async ()
     showToast('导入失败：请求失败', 'error');
   }
 });
+
+const updateNotice = document.getElementById('updateNotice');
+const updateNoticeText = document.getElementById('updateNoticeText');
+const homeUpdateController = window.createUpdateUiController({
+  checkForUpdates: (force) => window.browserAPI.checkForUpdates(force),
+  openReleasePage: (releaseUrl) => window.browserAPI.openReleasePage(releaseUrl),
+  render: (state) => {
+    updateNotice.hidden = !state.showNotice;
+    if (state.showNotice) updateNoticeText.textContent = `发现新版本 ${state.available.version}`;
+  },
+});
+
+window.browserAPI.onUpdateCheckResult((result) => {
+  homeUpdateController.accept(result);
+});
+document.getElementById('dismissUpdateNotice').addEventListener('click', () => {
+  homeUpdateController.dismiss();
+});
+document.getElementById('openUpdateRelease').addEventListener('click', async () => {
+  const result = await homeUpdateController.openAvailable();
+  if (!result.success) showToast('无法打开下载页面，请稍后重试', 'error');
+});

@@ -5,6 +5,7 @@ const path = require('node:path');
 const { registerIpcHandlers } = require('../lib/ipc-handlers');
 
 const privatePath = path.resolve(path.sep, 'private', 'path');
+const releaseUrl = 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0';
 
 const expectedChannels = [
   'get-profiles',
@@ -31,6 +32,9 @@ const expectedChannels = [
   'browse-folder',
   'get-app-settings',
   'set-app-settings',
+  'get-app-version',
+  'check-for-updates',
+  'open-release-page',
   'get-workspaces',
   'create-workspace',
   'rename-workspace',
@@ -48,6 +52,9 @@ function createHandlerFixture({
   appSettingsService: appSettingsOverrides = {},
   workspaceService: workspaceOverrides = {},
   diagnosticsService: diagnosticsOverrides = {},
+  updateChecker: updateCheckerOverrides = {},
+  openExternal = async () => {},
+  appVersion = '1.3.1',
 } = {}) {
   const handlers = new Map();
   const ipcMain = {
@@ -92,10 +99,16 @@ function createHandlerFixture({
       ...settingsOverrides,
     },
     appSettingsService: {
-      get: () => ({ closeToTray: true }),
-      set: () => ({ success: true, settings: { closeToTray: true } }),
+      get: () => ({ closeToTray: true, checkUpdatesOnStartup: true }),
+      set: () => ({ success: true, settings: { closeToTray: true, checkUpdatesOnStartup: true } }),
       ...appSettingsOverrides,
     },
+    updateChecker: {
+      check: async () => ({ status: 'current' }),
+      ...updateCheckerOverrides,
+    },
+    openExternal,
+    appVersion,
     workspaceService: {
       list: () => [],
       create: () => {},
@@ -135,6 +148,66 @@ test('registers each existing IPC channel once and unregisters cleanly', async (
 test('IPC removes the legacy one-shot import channel', () => {
   const { handlers } = createHandlerFixture();
   assert.equal(handlers.has('import-profiles'), false);
+});
+
+test('update IPC accepts only exact force payloads and narrows direct or cached results', async () => {
+  const calls = [];
+  const { handlers } = createHandlerFixture({
+    updateChecker: {
+      check(options) {
+        calls.push(options);
+        return { status: 'cached', result: { status: 'available', version: '1.4.0', releaseUrl } };
+      },
+    },
+    appVersion: '1.3.1',
+  });
+
+  assert.equal(await handlers.get('get-app-version')({}), '1.3.1');
+  assert.deepEqual(await handlers.get('check-for-updates')({}, { force: true }), {
+    status: 'cached', result: { status: 'available', version: '1.4.0', releaseUrl },
+  });
+  assert.deepEqual(calls, [{ force: true }]);
+  for (const payload of [undefined, {}, { force: 'true' }, { force: true, extra: true }]) {
+    assert.deepEqual(await handlers.get('check-for-updates')({}, payload), {
+      status: 'error', code: 'UPDATE_CHECK_REQUEST_FAILED',
+    });
+  }
+
+  const malformed = createHandlerFixture({
+    updateChecker: { check: () => ({ status: 'available', version: '1.4.0', releaseUrl: 'https://evil.example' }) },
+  });
+  assert.deepEqual(await malformed.handlers.get('check-for-updates')({}, { force: false }), {
+    status: 'error', code: 'UPDATE_CHECK_REQUEST_FAILED',
+  });
+  for (const version of ['1.3.1', '1.2.9']) {
+    const stale = createHandlerFixture({
+      updateChecker: { check: () => ({
+        status: 'available',
+        version,
+        releaseUrl: `https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v${version}`,
+      }) },
+    });
+    assert.deepEqual(await stale.handlers.get('check-for-updates')({}, { force: false }), {
+      status: 'error', code: 'UPDATE_CHECK_REQUEST_FAILED',
+    });
+  }
+});
+
+test('release page IPC revalidates the URL and never leaks shell failures', async () => {
+  const opened = [];
+  const { handlers } = createHandlerFixture({
+    openExternal: async (url) => { opened.push(url); },
+  });
+
+  assert.deepEqual(await handlers.get('open-release-page')({}, releaseUrl), { success: true });
+  assert.deepEqual(opened, [releaseUrl]);
+  assert.deepEqual(await handlers.get('open-release-page')({}, 'https://evil.example'), {
+    success: false, code: 'INVALID_RELEASE_URL',
+  });
+  const failing = createHandlerFixture({ openExternal: async () => { throw new Error(privatePath); } });
+  assert.deepEqual(await failing.handlers.get('open-release-page')({}, releaseUrl), {
+    success: false, code: 'OPEN_RELEASE_PAGE_FAILED',
+  });
 });
 
 test('diagnostics IPC accepts only a profile ID and never forwards service exceptions', async () => {
@@ -372,15 +445,18 @@ test('app settings IPC exposes only validated settings and sanitizes failures', 
       get: () => ({ closeToTray: false, path: privatePath }),
       set(value) {
         patch = value;
-        return { success: true, settings: { closeToTray: false } };
+        return { success: true, settings: { closeToTray: false, checkUpdatesOnStartup: true } };
       },
     },
   });
 
-  assert.deepEqual(await handlers.get('get-app-settings')({}, undefined), { closeToTray: true });
+  assert.deepEqual(await handlers.get('get-app-settings')({}, undefined), {
+    closeToTray: true,
+    checkUpdatesOnStartup: true,
+  });
   assert.deepEqual(await handlers.get('set-app-settings')({}, { closeToTray: false }), {
     success: true,
-    settings: { closeToTray: false },
+    settings: { closeToTray: false, checkUpdatesOnStartup: true },
   });
   assert.deepEqual(patch, { closeToTray: false });
 

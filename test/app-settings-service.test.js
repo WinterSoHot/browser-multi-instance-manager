@@ -5,7 +5,7 @@ const { createAsyncQueue } = require('../lib/async-queue');
 const { createAppSettingsService } = require('../lib/app-settings-service');
 const { createAppLifecycle } = require('../lib/app-lifecycle');
 
-function createAppStore(initial = { closeToTray: true }) {
+function createAppStore(initial = { closeToTray: true, checkUpdatesOnStartup: true }) {
   let settings = structuredClone(initial);
   const writes = [];
   return {
@@ -24,15 +24,15 @@ test('app settings service returns defensive copies and applies a strict partial
 
   const settings = service.get();
   settings.closeToTray = false;
-  assert.deepEqual(service.get(), { closeToTray: true });
+  assert.deepEqual(service.get(), { closeToTray: true, checkUpdatesOnStartup: true });
   assert.deepEqual(await service.set({ closeToTray: false }), {
     success: true,
-    settings: { closeToTray: false },
+    settings: { closeToTray: false, checkUpdatesOnStartup: true },
   });
   await assert.rejects(service.set({ closeToTray: 'false' }), /Invalid app settings/u);
   await assert.rejects(service.set({ unknown: true }), /Invalid app settings/u);
   await assert.rejects(service.set({}), /Invalid app settings/u);
-  assert.deepEqual(appStore.getWrites(), [{ closeToTray: false }]);
+  assert.deepEqual(appStore.getWrites(), [{ closeToTray: false, checkUpdatesOnStartup: true }]);
 });
 
 test('app settings service serializes concurrent patches against the current stored settings', async () => {
@@ -40,14 +40,14 @@ test('app settings service serializes concurrent patches against the current sto
   const service = createAppSettingsService({ appStore, enqueueMutation: createAsyncQueue() });
 
   const first = service.set({ closeToTray: false });
-  const second = service.set({ closeToTray: true });
+  const second = service.set({ checkUpdatesOnStartup: false });
 
   await Promise.all([first, second]);
   assert.deepEqual(appStore.getWrites(), [
-    { closeToTray: false },
-    { closeToTray: true },
+    { closeToTray: false, checkUpdatesOnStartup: true },
+    { closeToTray: false, checkUpdatesOnStartup: false },
   ]);
-  assert.deepEqual(service.get(), { closeToTray: true });
+  assert.deepEqual(service.get(), { closeToTray: false, checkUpdatesOnStartup: false });
 });
 
 test('a saved close-to-tray change is observed by the lifecycle without restarting', async () => {

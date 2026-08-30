@@ -22,6 +22,66 @@ const closeToTrayBinding = window.bindCloseToTrayCheckbox({
   controller: appSettingsController,
   showError: () => alert('保存托盘设置失败，请重试'),
 });
+const updateCheckbox = document.getElementById('checkUpdatesOnStartup');
+const updateButton = document.getElementById('checkForUpdates');
+const updateStatus = document.getElementById('updateStatus');
+const openReleaseButton = document.getElementById('openReleasePage');
+let updateSettingLoaded = false;
+let updateController;
+const updateSettingBinding = window.bindUpdateSettingsCheckbox({
+  checkbox: updateCheckbox,
+  getAppSettings: () => window.browserAPI.getAppSettings(),
+  setAppSettings: (settings) => window.browserAPI.setAppSettings(settings),
+  showError: () => alert('保存更新设置失败，请重试'),
+});
+
+function setUpdateStatus(result) {
+  const update = result?.status === 'cached' ? result.result : result;
+  const cachedPrefix = result?.status === 'cached' ? '已使用最近结果，' : '';
+  if (update?.status === 'available') updateStatus.textContent = `${cachedPrefix}发现新版本 ${update.version}`;
+  else if (update?.status === 'current') updateStatus.textContent = `${cachedPrefix}当前已是最新版本`;
+  else if (update?.status === 'error') updateStatus.textContent = '检查更新失败，请稍后重试';
+  else updateStatus.textContent = '';
+}
+
+function renderUpdate(state) {
+  updateButton.disabled = state.busy || !updateSettingLoaded;
+  setUpdateStatus(state.result);
+  openReleaseButton.hidden = !state.available;
+}
+
+async function loadUpdateSettings() {
+  await updateSettingBinding.load();
+  updateSettingLoaded = true;
+  if (updateController) renderUpdate({ busy: updateController.isBusy() });
+}
+
+async function loadUpdateVersion() {
+  let version = '未知';
+  try {
+    const received = await window.browserAPI.getAppVersion();
+    if (typeof received === 'string') version = received;
+  } catch {
+    // Keep the stable display fallback.
+  }
+  document.getElementById('appVersion').textContent = version;
+  updateController = window.createUpdateUiController({
+    currentVersion: version,
+    checkForUpdates: (force) => window.browserAPI.checkForUpdates(force),
+    openReleasePage: (releaseUrl) => window.browserAPI.openReleasePage(releaseUrl),
+    render: renderUpdate,
+  });
+  renderUpdate({ busy: false });
+}
+
+updateButton.addEventListener('click', () => {
+  if (updateController && !updateController.isBusy()) void updateController.check(true);
+});
+openReleaseButton.addEventListener('click', async () => {
+  if (!updateController) return;
+  const result = await updateController.openAvailable();
+  if (!result.success) alert('无法打开下载页面，请稍后重试');
+});
 
 function setSettingsBusy(busy) {
   document.getElementById('saveSettings').disabled = busy;
@@ -178,6 +238,8 @@ document.getElementById('backToHome').addEventListener('click', () => {
 
 // Initialize
 void loadAppSettings();
+void loadUpdateSettings();
+void loadUpdateVersion();
 void loadSettings().catch(() => {
   document.getElementById('browserSettingsList').innerHTML = '<p class="path-status invalid">加载失败，请重试</p>';
 });

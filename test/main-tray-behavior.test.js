@@ -3,22 +3,32 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const Module = require('node:module');
 const path = require('node:path');
+const { sanitizeUpdateResult } = require('../lib/update-checker');
 
 function waitForMainTurn() {
   return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
 }
 
-async function loadMain({ profiles = [], platform = process.platform, showError = null } = {}) {
+async function loadMain({
+  profiles = [],
+  platform = process.platform,
+  showError = null,
+  appSettings = { closeToTray: true, checkUpdatesOnStartup: true },
+  updateResult = { status: 'current' },
+} = {}) {
   const originalLoad = Module._load;
   const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
   const mainPath = path.join(__dirname, '..', 'main.js');
   const windows = [];
   const dialogCalls = [];
   const iconPaths = [];
+  const updateChecks = [];
+  const sent = [];
 
   class FakeApp extends EventEmitter {
     whenReady() { return Promise.resolve(); }
     getPath() { return path.join(path.sep, 'app-data'); }
+    getVersion() { return '1.3.1'; }
     quit() { this.emit('before-quit', { preventDefault() {} }); }
   }
 
@@ -29,7 +39,8 @@ async function loadMain({ profiles = [], platform = process.platform, showError 
       this.showCalls = 0;
       this.focusCalls = 0;
       windows.push(this);
-      this.webContents = { send() {} };
+      this.webContents = new EventEmitter();
+      this.webContents.send = (channel, payload) => sent.push({ channel, payload });
     }
 
     loadFile() {}
@@ -89,7 +100,9 @@ async function loadMain({ profiles = [], platform = process.platform, showError 
     getRunningProcesses: () => [],
     setRunningProcesses() {},
     getWorkspaces: () => [],
-    getAppSettings: () => ({ closeToTray: true }),
+    getAppSettings: () => structuredClone(appSettings),
+    getUpdateCheckCache: () => null,
+    setUpdateCheckCache() {},
   };
   const emptyService = {
     list: () => [],
@@ -153,6 +166,18 @@ async function loadMain({ profiles = [], platform = process.platform, showError 
     if (request === './lib/process-terminator') return { terminateLaunchedProcessTree: () => {} };
     if (request === './lib/import-reader') return { readTextFileBounded: () => {} };
     if (request === './lib/ipc-handlers') return { registerIpcHandlers: () => () => {} };
+    if (request === './lib/github-release-client') return { createGithubReleaseClient: () => async () => ({}) };
+    if (request === './lib/update-checker') {
+      return {
+        createUpdateChecker: () => ({
+          check(options) {
+            updateChecks.push(options);
+            return Promise.resolve(updateResult);
+          },
+        }),
+        sanitizeUpdateResult,
+      };
+    }
     if (request === './lib/process-inspector') {
       return { inspectBrowserProcess: () => {}, inspectBrowserProcesses: () => {} };
     }
@@ -175,7 +200,7 @@ async function loadMain({ profiles = [], platform = process.platform, showError 
     Module._load = originalLoad;
     delete require.cache[require.resolve(mainPath)];
   }
-  return { app, windows, dialogCalls, iconPaths };
+  return { app, windows, dialogCalls, iconPaths, sent, updateChecks };
 }
 
 test('main drops a closed window reference and opens exit confirmation without a destroyed parent', async () => {
@@ -239,4 +264,50 @@ test('main consumes initial and activate window-show failures', async () => {
   } finally {
     process.removeListener('unhandledRejection', onUnhandled);
   }
+});
+
+test('main starts one automatic check after first did-finish-load and sends a narrowed result', async () => {
+  const harness = await loadMain({
+    updateResult: { status: 'available', version: '1.4.0', releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0' },
+  });
+  harness.windows[0].webContents.emit('did-finish-load');
+  await waitForMainTurn();
+  harness.windows[0].webContents.emit('did-finish-load');
+  await waitForMainTurn();
+
+  assert.deepEqual(harness.updateChecks, [{ force: false }]);
+  assert.deepEqual(harness.sent, [{
+    channel: 'update-check-result',
+    payload: { status: 'available', version: '1.4.0', releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0' },
+  }]);
+});
+
+test('a disabled first startup decision never checks after a recreated window', async () => {
+  const harness = await loadMain({
+    appSettings: { closeToTray: true, checkUpdatesOnStartup: false },
+  });
+  const first = harness.windows[0];
+  first.webContents.emit('did-finish-load');
+  first.detachWithoutClosedEvent();
+  first.emitClosed();
+  harness.app.emit('activate');
+  await waitForMainTurn();
+  harness.windows[0].webContents.emit('did-finish-load');
+  await waitForMainTurn();
+
+  assert.deepEqual(harness.updateChecks, []);
+  assert.deepEqual(harness.sent, []);
+});
+
+test('main turns malformed or stale automatic results into a stable error event', async () => {
+  const harness = await loadMain({
+    updateResult: { status: 'available', version: '1.3.1', releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.3.1' },
+  });
+  harness.windows[0].webContents.emit('did-finish-load');
+  await waitForMainTurn();
+
+  assert.deepEqual(harness.sent, [{
+    channel: 'update-check-result',
+    payload: { status: 'error', code: 'UPDATE_CHECK_REQUEST_FAILED' },
+  }]);
 });

@@ -102,21 +102,31 @@ test('update-check cache migration preserves only the minimal valid shape', () =
   });
 });
 
-test('app settings migrate close-to-tray to a true default and stay idempotent', () => {
-  const once = migrateStoreData({ appSettings: {} });
+test('app settings migrate legacy close-to-tray values with an enabled update-check default', () => {
+  const once = migrateStoreData({ appSettings: { closeToTray: false } });
 
-  assert.deepEqual(once.appSettings, { closeToTray: true });
+  assert.deepEqual(once.appSettings, { closeToTray: false, checkUpdatesOnStartup: true });
   assert.deepEqual(migrateStoreData(once), once);
 });
 
 test('app settings accept booleans and reject unknown keys or wrong types', () => {
-  assert.deepEqual(validateAppSettings({ closeToTray: false }), { closeToTray: false });
+  assert.deepEqual(validateAppSettings({ closeToTray: false, checkUpdatesOnStartup: false }), {
+    closeToTray: false,
+    checkUpdatesOnStartup: false,
+  });
   assert.throws(() => validateAppSettings({ closeToTray: 'no' }), /Invalid app settings/u);
+  assert.throws(
+    () => validateAppSettings({ closeToTray: false, checkUpdatesOnStartup: 'no' }),
+    /Invalid app settings/u,
+  );
   assert.throws(() => validateAppSettings({ arbitrary: true }), /Invalid app settings/u);
 });
 
 test('app settings partial validation accepts a non-empty known subset only', () => {
   assert.deepEqual(validateAppSettingsPatch({ closeToTray: false }), { closeToTray: false });
+  assert.deepEqual(validateAppSettingsPatch({ checkUpdatesOnStartup: false }), {
+    checkUpdatesOnStartup: false,
+  });
   assert.throws(() => validateAppSettingsPatch({}), /Invalid app settings/u);
   assert.throws(() => validateAppSettingsPatch({ unknown: true }), /Invalid app settings/u);
   assert.throws(() => validateAppSettingsPatch({ closeToTray: 'false' }), /Invalid app settings/u);
@@ -148,7 +158,7 @@ test('adapter leaves a current snapshot unwritten', () => {
     workspaces: [],
     browserSettings: {},
     runningBrowserProcesses: [],
-    appSettings: { closeToTray: true },
+    appSettings: { closeToTray: true, checkUpdatesOnStartup: true },
     updateCheckCache: null,
   };
   const store = createStore(migrated);
@@ -301,11 +311,11 @@ test('runtime app settings writes validate before persisting', () => {
   const store = createStore(current);
   const appStore = createAppStore(store);
 
-  appStore.setAppSettings({ closeToTray: false });
-  assert.deepEqual(appStore.getAppSettings(), { closeToTray: false });
-  assert.throws(() => appStore.setAppSettings({ closeToTray: 'false' }), /Invalid app settings/u);
-  assert.throws(() => appStore.setAppSettings({ closeToTray: true, extra: true }), /Invalid app settings/u);
-  assert.deepEqual(store.getData().appSettings, { closeToTray: false });
+  appStore.setAppSettings({ closeToTray: false, checkUpdatesOnStartup: false });
+  assert.deepEqual(appStore.getAppSettings(), { closeToTray: false, checkUpdatesOnStartup: false });
+  assert.throws(() => appStore.setAppSettings({ closeToTray: 'false', checkUpdatesOnStartup: false }), /Invalid app settings/u);
+  assert.throws(() => appStore.setAppSettings({ closeToTray: true, checkUpdatesOnStartup: false, extra: true }), /Invalid app settings/u);
+  assert.deepEqual(store.getData().appSettings, { closeToTray: false, checkUpdatesOnStartup: false });
 });
 
 test('runtime update-check cache writes validate and return defensive copies', () => {

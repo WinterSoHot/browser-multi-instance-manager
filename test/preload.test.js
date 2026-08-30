@@ -7,6 +7,7 @@ const vm = require('node:vm');
 function loadBrowserApi() {
   let browserApi;
   const invocations = [];
+  const listeners = new Map();
   const source = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   vm.runInNewContext(source, {
     require(moduleName) {
@@ -23,13 +24,15 @@ function loadBrowserApi() {
             invocations.push({ channel, args });
             return Promise.resolve({ success: true });
           },
-          on() {},
-          removeListener() {},
+          on(channel, listener) { listeners.set(channel, listener); },
+          removeListener(channel, listener) {
+            if (listeners.get(channel) === listener) listeners.delete(channel);
+          },
         },
       };
     },
   });
-  return { browserApi, invocations };
+  return { browserApi, invocations, listeners };
 }
 
 test('preload exposes narrow workspace and favorite APIs with their intended payloads', async () => {
@@ -108,4 +111,25 @@ test('preload exposes narrow app settings calls', async () => {
     { channel: 'get-app-settings', args: [] },
     { channel: 'set-app-settings', args: [{ closeToTray: false }] },
   ]);
+});
+
+test('preload exposes narrow update APIs, constructs force payloads, and disposes event subscriptions', async () => {
+  const { browserApi, invocations, listeners } = loadBrowserApi();
+  const received = [];
+
+  await browserApi.getAppVersion();
+  await browserApi.checkForUpdates(true);
+  await browserApi.openReleasePage('https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0');
+  const dispose = browserApi.onUpdateCheckResult((result) => received.push(result));
+  listeners.get('update-check-result')({}, { status: 'current' });
+  dispose();
+  await browserApi.checkForUpdates('true');
+
+  assert.deepEqual(JSON.parse(JSON.stringify(invocations)), [
+    { channel: 'get-app-version', args: [] },
+    { channel: 'check-for-updates', args: [{ force: true }] },
+    { channel: 'open-release-page', args: ['https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0'] },
+  ]);
+  assert.deepEqual(received, [{ status: 'current' }]);
+  assert.equal(listeners.has('update-check-result'), false);
 });

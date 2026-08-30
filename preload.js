@@ -41,6 +41,19 @@ contextBridge.exposeInMainWorld('browserAPI', {
   browseFolder: (defaultPath) => ipcRenderer.invoke('browse-folder', defaultPath),
   getAppSettings: () => ipcRenderer.invoke('get-app-settings'),
   setAppSettings: (settings) => ipcRenderer.invoke('set-app-settings', settings),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  checkForUpdates: (force) => {
+    if (typeof force !== 'boolean') {
+      return Promise.resolve({ status: 'error', code: 'UPDATE_CHECK_REQUEST_FAILED' });
+    }
+    return ipcRenderer.invoke('check-for-updates', { force });
+  },
+  openReleasePage: (releaseUrl) => ipcRenderer.invoke('open-release-page', releaseUrl),
+  onUpdateCheckResult: (callback) => {
+    const listener = (_event, result) => callback(result);
+    ipcRenderer.on('update-check-result', listener);
+    return () => ipcRenderer.removeListener('update-check-result', listener);
+  },
   getWorkspaces: () => ipcRenderer.invoke('get-workspaces'),
   createWorkspace: (name) => ipcRenderer.invoke('create-workspace', { name }),
   renameWorkspace: (workspaceId, name) => (
