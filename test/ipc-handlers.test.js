@@ -372,12 +372,12 @@ test('app settings IPC exposes only validated settings and sanitizes failures', 
       get: () => ({ closeToTray: false, path: privatePath }),
       set(value) {
         patch = value;
-        return { success: true, settings: { closeToTray: false, path: privatePath } };
+        return { success: true, settings: { closeToTray: false } };
       },
     },
   });
 
-  assert.deepEqual(await handlers.get('get-app-settings')({}, undefined), { closeToTray: false });
+  assert.deepEqual(await handlers.get('get-app-settings')({}, undefined), { closeToTray: true });
   assert.deepEqual(await handlers.get('set-app-settings')({}, { closeToTray: false }), {
     success: true,
     settings: { closeToTray: false },
@@ -388,6 +388,20 @@ test('app settings IPC exposes only validated settings and sanitizes failures', 
     appSettingsService: { set: () => Promise.reject(new Error(privatePath)) },
   });
   assert.deepEqual(await failure.handlers.get('set-app-settings')({}, { closeToTray: false }), {
+    success: false,
+    code: 'APP_SETTINGS_REQUEST_FAILED',
+    error: 'Unable to save app settings',
+  });
+});
+
+test('app settings IPC rejects a malformed success response instead of reporting success', async () => {
+  const { handlers } = createHandlerFixture({
+    appSettingsService: {
+      set: () => ({ success: true, settings: { closeToTray: 'bad' } }),
+    },
+  });
+
+  assert.deepEqual(await handlers.get('set-app-settings')({}, { closeToTray: false }), {
     success: false,
     code: 'APP_SETTINGS_REQUEST_FAILED',
     error: 'Unable to save app settings',

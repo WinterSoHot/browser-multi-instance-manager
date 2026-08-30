@@ -28,8 +28,13 @@ function setAppSettingsBusy(busy) {
 }
 
 async function loadAppSettings() {
-  const settings = await appSettingsController.load();
-  document.getElementById('closeToTray').checked = settings.closeToTray;
+  setAppSettingsBusy(true);
+  try {
+    const settings = await appSettingsController.load();
+    document.getElementById('closeToTray').checked = settings.closeToTray;
+  } finally {
+    setAppSettingsBusy(false);
+  }
 }
 
 // Load settings on startup
@@ -42,8 +47,6 @@ async function loadSettings() {
   customSettings = environment.settings;
   defaultPaths = environment.defaultPaths;
   browserValidity = environment.validity;
-
-  await loadAppSettings();
 
   // Load default view mode
   const savedViewMode = localStorage.getItem('defaultViewMode');
@@ -170,14 +173,18 @@ document.getElementById('resetSettings').addEventListener('click', async () => {
 
 document.getElementById('closeToTray').addEventListener('change', async (event) => {
   const checkbox = event.currentTarget;
+  if (!appSettingsController.isLoaded()) return;
   const requestedValue = checkbox.checked;
   setAppSettingsBusy(true);
-  const result = await appSettingsController.save({ closeToTray: requestedValue });
-  checkbox.checked = result.settings.closeToTray;
-  if (!result.success) {
-    alert('保存托盘设置失败，请重试');
+  try {
+    const result = await appSettingsController.save({ closeToTray: requestedValue });
+    checkbox.checked = result.settings.closeToTray;
+    if (!result.success) {
+      alert('保存托盘设置失败，请重试');
+    }
+  } finally {
+    setAppSettingsBusy(false);
   }
-  setAppSettingsBusy(false);
 });
 
 // Back to home
@@ -186,6 +193,7 @@ document.getElementById('backToHome').addEventListener('click', () => {
 });
 
 // Initialize
+void loadAppSettings();
 void loadSettings().catch(() => {
   document.getElementById('browserSettingsList').innerHTML = '<p class="path-status invalid">加载失败，请重试</p>';
 });

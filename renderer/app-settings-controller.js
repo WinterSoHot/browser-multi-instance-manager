@@ -1,29 +1,43 @@
-function isAppSettings(settings) {
+function hasCloseToTraySetting(settings) {
   return Boolean(
     settings
     && typeof settings === 'object'
     && !Array.isArray(settings)
-    && Object.keys(settings).length === 1
-    && Object.prototype.hasOwnProperty.call(settings, 'closeToTray')
     && typeof settings.closeToTray === 'boolean',
   );
 }
 
 function createAppSettingsController({ getAppSettings, setAppSettings }) {
   let persistedSettings = { closeToTray: true };
+  let loaded = false;
 
   async function load() {
-    const settings = await getAppSettings();
-    if (isAppSettings(settings)) persistedSettings = { ...settings };
+    loaded = false;
+    try {
+      const settings = await getAppSettings();
+      if (hasCloseToTraySetting(settings)) {
+        persistedSettings = { closeToTray: settings.closeToTray };
+      }
+    } catch {
+      // Keep the stable default when loading cannot complete.
+    }
+    loaded = true;
     return { ...persistedSettings };
   }
 
   async function save(patch) {
     const previous = { ...persistedSettings };
+    if (!loaded) {
+      return {
+        success: false,
+        settings: previous,
+        error: 'Unable to save app settings',
+      };
+    }
     try {
       const result = await setAppSettings(patch);
-      if (result?.success === true && isAppSettings(result.settings)) {
-        persistedSettings = { ...result.settings };
+      if (result?.success === true && hasCloseToTraySetting(result.settings)) {
+        persistedSettings = { closeToTray: result.settings.closeToTray };
         return { success: true, settings: { ...persistedSettings } };
       }
     } catch {
@@ -36,7 +50,7 @@ function createAppSettingsController({ getAppSettings, setAppSettings }) {
     };
   }
 
-  return { load, save };
+  return { load, save, isLoaded: () => loaded };
 }
 
 if (typeof module !== 'undefined') module.exports = { createAppSettingsController };

@@ -6,6 +6,7 @@ const {
   createAppStore,
   migrateStoreData,
   validateAppSettings,
+  validateAppSettingsPatch,
 } = require('../lib/app-store');
 
 const legacyProfile = {
@@ -86,6 +87,13 @@ test('app settings accept booleans and reject unknown keys or wrong types', () =
   assert.deepEqual(validateAppSettings({ closeToTray: false }), { closeToTray: false });
   assert.throws(() => validateAppSettings({ closeToTray: 'no' }), /Invalid app settings/u);
   assert.throws(() => validateAppSettings({ arbitrary: true }), /Invalid app settings/u);
+});
+
+test('app settings partial validation accepts a non-empty known subset only', () => {
+  assert.deepEqual(validateAppSettingsPatch({ closeToTray: false }), { closeToTray: false });
+  assert.throws(() => validateAppSettingsPatch({}), /Invalid app settings/u);
+  assert.throws(() => validateAppSettingsPatch({ unknown: true }), /Invalid app settings/u);
+  assert.throws(() => validateAppSettingsPatch({ closeToTray: 'false' }), /Invalid app settings/u);
 });
 
 test('adapter writes a changed legacy snapshot once and returns defensive copies', () => {
