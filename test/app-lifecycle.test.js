@@ -252,6 +252,37 @@ test('a rejected application-quit promise leaves the lifecycle retryable', async
   assert.deepEqual(harness.forcedSnapshotOptions, [{ force: true }, { force: true }]);
 });
 
+test('concurrent callers share a delayed quit failure and a later success does not quit twice', async () => {
+  const delayedQuit = createDeferred();
+  let signalQuitStarted;
+  const quitStarted = new Promise((resolve) => {
+    signalQuitStarted = resolve;
+  });
+  let quitAttempts = 0;
+  const harness = createLifecycle({
+    quitApp: () => {
+      quitAttempts += 1;
+      if (quitAttempts === 1) {
+        signalQuitStarted();
+        return delayedQuit.promise;
+      }
+    },
+  });
+
+  const firstRequest = harness.lifecycle.requestQuit();
+  await quitStarted;
+  const secondRequest = harness.lifecycle.requestQuit();
+
+  assert.strictEqual(firstRequest, secondRequest);
+  delayedQuit.reject(new Error('application quit rejected'));
+  assert.equal(await firstRequest, false);
+  assert.equal(await secondRequest, false);
+  assert.equal(harness.lifecycle.isQuitting(), false);
+  assert.equal(await harness.lifecycle.requestQuit(), true);
+  assert.equal(await harness.lifecycle.requestQuit(), true);
+  assert.equal(quitAttempts, 2);
+});
+
 test('repeated quit requests share one snapshot and confirmation', async () => {
   const snapshot = createDeferred();
   const harness = createLifecycle({
