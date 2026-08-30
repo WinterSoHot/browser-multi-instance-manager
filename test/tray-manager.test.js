@@ -40,6 +40,8 @@ function createHarness({
   profiles = [profile('a', 'Account A', 'work')],
   workspaces = [{ id: 'work', name: 'Work' }],
   statuses = {},
+  listProfiles,
+  listFavoriteProfiles,
   getStatuses,
   launchProfiles,
   debounceMs = 5,
@@ -81,8 +83,8 @@ function createHarness({
     createTrayIcon: () => 'safe-icon',
     showWindow: () => { showCalls += 1; },
     requestQuit: () => { quitCalls += 1; },
-    listProfiles: () => profiles,
-    listFavoriteProfiles: () => profiles.filter((item) => item.favorite),
+    listProfiles: listProfiles || (() => profiles),
+    listFavoriteProfiles: listFavoriteProfiles || (() => profiles.filter((item) => item.favorite)),
     listWorkspaces: () => workspaces,
     getStatuses: getStatuses || ((profileIds, options) => {
       snapshotCalls.push({ profileIds, options });
@@ -124,7 +126,7 @@ test('tray menu shows sanitized active counts and favorites grouped by workspace
   assert.match(menu[0].label, /正在运行 2/u);
   assert.match(menu[0].label, /状态未知 1/u);
   assert.equal(findItem(menu, 'Work').submenu[0].label, 'Account A');
-  assert.equal(findItem(menu, 'Personal').submenu, undefined);
+  assert.equal(findItem(menu, '未分组').submenu[0].label, 'Personal');
   assert.equal(findItem(menu, 'Unsafe').label, 'Unsafe');
   assert.equal(findItem(menu, 'Account A').enabled, false);
   assert.equal(findItem(menu, 'Personal').enabled, false);
@@ -147,7 +149,10 @@ test('tray menu preserves workspace order and caps direct favorite entries at tw
   assert.ok(labels.indexOf('Later') < labels.indexOf('First'));
   assert.equal(findItem(menu, 'Plain 17').label, 'Plain 17');
   assert.equal(findItem(menu, 'Plain 18'), null);
-  assert.equal(findItem(menu, '更多请在主界面操作').enabled, false);
+  const overflow = findItem(menu, '更多请在主界面操作');
+  assert.equal(overflow.enabled, undefined);
+  overflow.click();
+  assert.equal(harness.showCalls, 1);
 });
 
 test('launch all uses one forced snapshot, skips running and unknown profiles, and caps concurrency at four', async () => {
@@ -252,4 +257,64 @@ test('tray manager uses favorite profiles as its status scope when no full profi
   await manager.create();
 
   assert.match(templates[0][0].label, /正在运行 0/u);
+});
+
+test('a refresh requested during a slow refresh runs once more with the newest profile metadata', async () => {
+  let currentProfiles = [profile('old', 'Old', 'work')];
+  let statusCalls = 0;
+  let releaseStatuses;
+  const statusesReady = new Promise((resolve) => { releaseStatuses = resolve; });
+  const harness = createHarness({
+    listProfiles: () => currentProfiles,
+    listFavoriteProfiles: () => currentProfiles,
+    getStatuses: async (profileIds) => {
+      statusCalls += 1;
+      if (statusCalls === 1) {
+        return Object.fromEntries(profileIds.map((profileId) => [profileId, { running: false }]));
+      }
+      if (statusCalls === 2) await statusesReady;
+      return Object.fromEntries(profileIds.map((profileId) => [profileId, { running: false }]));
+    },
+  });
+
+  await harness.manager.create();
+  const refresh = harness.manager.refresh();
+  await new Promise((resolve) => setImmediate(resolve));
+  currentProfiles = [profile('new', 'New', 'work')];
+  harness.manager.refresh();
+  harness.manager.scheduleRefresh();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  releaseStatuses();
+  await refresh;
+  await new Promise((resolve) => setTimeout(resolve, 15));
+
+  assert.ok(findItem(harness.templates.at(-1), 'New'));
+  assert.equal(findItem(harness.templates.at(-1), 'Old'), null);
+  assert.equal(statusCalls, 3);
+});
+
+test('destroy prevents a queued trailing refresh from rebuilding the menu', async () => {
+  let statusCalls = 0;
+  let releaseStatuses;
+  const statusesReady = new Promise((resolve) => { releaseStatuses = resolve; });
+  const harness = createHarness({
+    getStatuses: async (profileIds) => {
+      statusCalls += 1;
+      if (statusCalls === 2) await statusesReady;
+      return Object.fromEntries(profileIds.map((profileId) => [profileId, { running: false }]));
+    },
+  });
+
+  await harness.manager.create();
+  const initialMenus = harness.templates.length;
+  const refresh = harness.manager.refresh();
+  await new Promise((resolve) => setImmediate(resolve));
+  harness.manager.refresh();
+  await harness.manager.destroy();
+  releaseStatuses();
+  await refresh;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(statusCalls, 2);
+  assert.equal(harness.templates.length, initialMenus);
 });

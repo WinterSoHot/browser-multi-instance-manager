@@ -327,3 +327,31 @@ test('before-quit passes through after an approved quit has set isQuitting', asy
   assert.equal(event.defaultPrevented, false);
   assert.equal(harness.quitCalls, 1);
 });
+
+test('a close event during approved application quit is not diverted back to the tray', async () => {
+  let lifecycle;
+  let trayDestroyCalls = 0;
+  let appQuitCalls = 0;
+  let closeEvent;
+  const beforeQuitEvent = createCancelableEvent();
+  lifecycle = createAppLifecycle({
+    platform: 'darwin',
+    getCloseToTray: () => true,
+    getActiveStatusCount: () => ({ running: 0, unknown: 0 }),
+    confirmExit: async () => assert.fail('empty status snapshot must not prompt'),
+    hideWindow: () => assert.fail('approved quit must not hide the window'),
+    destroyTray: () => { trayDestroyCalls += 1; },
+    quitApp: async () => {
+      appQuitCalls += 1;
+      assert.equal(await lifecycle.handleBeforeQuit(beforeQuitEvent), true);
+      closeEvent = createCancelableEvent();
+      assert.equal(await lifecycle.handleWindowClose(closeEvent), true);
+    },
+  });
+
+  assert.equal(await lifecycle.requestQuit(), true);
+  assert.equal(beforeQuitEvent.defaultPrevented, false);
+  assert.equal(closeEvent.defaultPrevented, false);
+  assert.equal(trayDestroyCalls, 1);
+  assert.equal(appQuitCalls, 1);
+});

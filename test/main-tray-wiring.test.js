@@ -14,7 +14,7 @@ test('main wires the tray manager and lifecycle without any browser-close operat
 });
 
 test('main routes close, before-quit, activate, and window-all-closed through lifecycle-safe window handling', () => {
-  assert.match(mainSource, /mainWindow\.on\(["']close["'],[\s\S]*?handleWindowClose/u);
+  assert.match(mainSource, /window\.on\(["']close["'],[\s\S]*?handleWindowClose/u);
   assert.match(mainSource, /app\.on\(["']before-quit["'],[\s\S]*?handleBeforeQuit/u);
   assert.match(mainSource, /app\.on\(["']activate["'],[\s\S]*?showMainWindow/u);
   assert.match(mainSource, /app\.on\(["']window-all-closed["'],[\s\S]*?requestQuit/u);

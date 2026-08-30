@@ -175,7 +175,7 @@ const diagnosticsService = createDiagnosticsService({
 });
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 800,
     height: 600,
     webPreferences: {
@@ -186,11 +186,15 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
-  mainWindow.on("close", (event) => {
+  mainWindow = window;
+  window.loadFile(path.join(__dirname, "renderer", "index.html"));
+  window.on("close", (event) => {
     void appLifecycle.handleWindowClose(event);
   });
-  return mainWindow;
+  window.on("closed", () => {
+    if (mainWindow === window) mainWindow = undefined;
+  });
+  return window;
 }
 
 const unregisterIpcHandlers = registerIpcHandlers({
@@ -230,7 +234,8 @@ async function showMainWindow() {
 }
 
 function createTrayIcon() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, "build", "icons", "icon.png"));
+  const iconName = process.platform === "darwin" ? "trayTemplate.png" : "trayTemplate@2x.png";
+  const icon = nativeImage.createFromPath(path.join(__dirname, "build", "icons", iconName));
   if (process.platform !== "darwin" || icon.isEmpty()) return icon;
   const trayIcon = icon.resize({ width: 16, height: 16 });
   trayIcon.setTemplateImage(true);
@@ -259,14 +264,17 @@ const appLifecycle = createAppLifecycle({
   getCloseToTray: () => appStore.getAppSettings().closeToTray !== false,
   getActiveStatusCount,
   confirmExit: async ({ running, unknown }) => {
-    const result = await dialog.showMessageBox(mainWindow, {
+    const options = {
       type: "warning",
       buttons: ["取消", "退出管理器"],
       defaultId: 0,
       cancelId: 0,
       message: `有 ${running} 个正在运行的浏览器，${unknown} 个状态未知。`,
       detail: "只退出管理器，不关闭浏览器。",
-    });
+    };
+    const result = mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
     return result.response === 1;
   },
   hideWindow: () => mainWindow?.hide(),
