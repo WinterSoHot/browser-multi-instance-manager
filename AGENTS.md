@@ -2,32 +2,33 @@
 
 ## Structure
 
-This is a small Electron desktop app. `main.js` owns the main process, IPC handlers, browser launching, and `electron-store` persistence; `preload.js` exposes `window.browserAPI`. Renderer pages and shared CSS live in `renderer/`, packaged icons in `build/icons/`, tests in `test/`, and release automation in `.github/workflows/build.yml`. Keep generated installers in ignored `dist/`.
+This Electron app keeps main-process behavior and persistence in `main.js`; `preload.js` exposes `window.browserAPI`. UI files live in `renderer/`, reusable privileged helpers in `lib/`, icons in `build/icons/`, tests in `test/`, and CI in `.github/workflows/build.yml`. Generated installers belong in ignored `dist/`.
 
 ## Commands
 
-- `npm ci`: install the locked dependency set.
-- `npm test`: run Node’s built-in tests.
+- `npm ci`: install locked dependencies.
+- `npm test`: run the Node test suite.
 - `npm start`: launch Electron locally.
 - `npm run build`: package for the current platform.
 - `npm run build:mac`: create x64 and arm64 DMGs.
 - `npm run build:win`: create the Windows x64 NSIS installer.
-- `npm run build:all`: request both platforms; host restrictions may apply.
 
 ## Style and Tests
 
-Use CommonJS JavaScript, HTML, and CSS; discuss new frameworks first. Follow surrounding style: two-space indentation, semicolons, multiline trailing commas, `camelCase` names, existing quote style, and shared CSS variables. Keep browser behavior in `main.js` and expose only required renderer methods through `preload.js`.
+Use CommonJS JavaScript, HTML, and CSS. Follow surrounding style: two-space indentation, semicolons, multiline trailing commas, `camelCase` names, existing quote style, and shared CSS variables. Expose only required renderer methods through `preload.js`.
 
-Add regressions as `test/*.test.js`, name the protected behavior, and run `npm test`. Smoke-test affected actions, search/filter, view switching, and browser paths with `npm start`. Verify platform-specific changes on that OS. PRs should summarize behavior and platform impact, link issues, include UI screenshots, and record manual checks. Use focused Chinese commit subjects such as `新增`, `修复`, `优化`, or `更新`.
+Add regressions as `test/*.test.js`, name the protected behavior, and run `npm test`. Smoke-test affected profile actions, filters, views, and browser paths with `npm start`; verify platform-specific changes on that OS. PRs need a behavior/platform summary, linked issues, UI screenshots when relevant, and manual checks. Use focused Chinese commit subjects such as `新增`, `修复`, `优化`, or `更新`.
 
 For process or bulk-operation changes, cover bulk snapshots, unknown recovered-process states, and the four-operation concurrency limit. Import/export tests must prove that only browser type and profile name leave the app.
 
+Filtering must remove hidden selections before bulk actions. Keep “new blank copy” wording unless browser data is copied. Bound status lists and chunk platform process inspection.
+
 ## Automatic Releases
 
-For a release, update both manifest versions, run `npm test` and the relevant local package command, and obtain explicit approval before pushing `main`. Actions tests PRs and `main` on macOS and Windows. An already-published version only tests; otherwise both installers must build before Actions creates or reuses a same-commit annotated `v<version>` tag and publishes the Release. Never create, move, or overwrite the tag beforehand; increment released versions.
+For releases, update both manifest versions, run `npm test` and local packaging, then obtain explicit approval before pushing `main`. Actions tests macOS and Windows before creating or reusing an exact-commit annotated `v<version>` tag and publishing. Never pre-create, move, or overwrite tags; increment released versions.
 
 ## Security
 
-Treat IPC as a trust boundary and validate renderer input in main-process handlers. Keep machine-specific browser paths in app settings. Never commit `dist/`, local settings, profile data, credentials, or publishing tokens; use repository secrets.
+Validate renderer input in main-process IPC handlers. Keep machine paths in app settings. Never commit `dist/`, local settings, profile data, credentials, or tokens.
 
-Profile removal preserves data by default. Local data may only be moved with Electron’s system trash API after an explicit UI choice; never permanently delete profile directories. “Forget process” clears only a recovered tracking record and must never signal an unverified PID.
+Profile removal preserves data by default; only move it with Electron’s trash API after explicit choice. “Forget process” clears only tracking data, requires a warning acknowledgement, and never signals an unverified PID. Tree termination is limited to app-launched processes; recovered PIDs require a fresh exact executable/profile verification immediately before signaling. Main-process launch, delete, and rename operations must share per-profile lifecycle coordination.

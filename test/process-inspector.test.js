@@ -263,3 +263,66 @@ test('verifies multiple recovered processes from one shared detail snapshot', as
   );
   assert.equal(snapshotCalls, 1);
 });
+
+test('chunks large process snapshots before invoking platform inspection', async () => {
+  const batchSizes = [];
+  const records = Array.from({ length: 5 }, (_, index) => ({
+    ...chromeRecord,
+    profileId: `profile-${index}`,
+    pid: 5000 + index,
+  }));
+
+  const result = await processInspector.inspectBrowserProcesses?.(records, {
+    platform: 'darwin',
+    batchSize: 2,
+    async getDetailsBatch(batch) {
+      batchSizes.push(batch.length);
+      return new Map(batch.map((record) => [record.pid, {
+        executablePath: record.executablePath,
+        commandLine: `${record.executablePath} --user-data-dir=${record.profilePath}`,
+      }]));
+    },
+  });
+
+  assert.deepEqual(batchSizes, [2, 2, 1]);
+  assert.deepEqual(Object.values(result), Array(5).fill('verified'));
+});
+
+test('limits concurrent platform inspection chunks', async () => {
+  let active = 0;
+  let peak = 0;
+  let calls = 0;
+  const releases = [];
+  const records = Array.from({ length: 5 }, (_, index) => ({
+    ...chromeRecord,
+    profileId: `bounded-${index}`,
+    pid: 6000 + index,
+  }));
+
+  const inspection = processInspector.inspectBrowserProcesses?.(records, {
+    platform: 'darwin',
+    batchSize: 1,
+    batchConcurrency: 2,
+    async getDetailsBatch(batch) {
+      calls += 1;
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => releases.push(resolve));
+      active -= 1;
+      const record = batch[0];
+      return new Map([[record.pid, {
+        executablePath: record.executablePath,
+        commandLine: `${record.executablePath} --user-data-dir=${record.profilePath}`,
+      }]]);
+    },
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(peak, 2);
+  while (releases.length > 0 || calls < records.length) {
+    releases.splice(0).forEach((release) => release());
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.deepEqual(Object.values(await inspection), Array(5).fill('verified'));
+  assert.equal(calls, 5);
+});

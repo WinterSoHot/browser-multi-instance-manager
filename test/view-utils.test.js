@@ -61,6 +61,55 @@ test('prevents overlapping executions of an asynchronous polling task', async ()
   await thirdRun;
 });
 
+test('coalesces duplicate refreshes and runs one trailing refresh', async () => {
+  const releases = [];
+  let executionCount = 0;
+  const refresh = viewUtils.createSingleFlightTask?.(async () => {
+    executionCount += 1;
+    await new Promise((resolve) => releases.push(resolve));
+    return `updated-${executionCount}`;
+  });
+
+  const first = refresh();
+  const second = refresh();
+  assert.equal(first, second);
+  assert.equal(executionCount, 1);
+  releases.shift()();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(executionCount, 2);
+  releases.shift()();
+  assert.equal(await second, 'updated-2');
+});
+
+test('runs a requested trailing refresh even when the first refresh fails', async () => {
+  let attempts = 0;
+  let rejectFirst;
+  const refresh = viewUtils.createSingleFlightTask?.(async () => {
+    attempts += 1;
+    if (attempts === 1) {
+      await new Promise((resolve, reject) => {
+        rejectFirst = reject;
+      });
+    }
+    return 'recovered';
+  });
+
+  const first = refresh();
+  const second = refresh();
+  rejectFirst(new Error('temporary failure'));
+
+  assert.equal(await second, 'recovered');
+  assert.equal(await first, 'recovered');
+  assert.equal(attempts, 2);
+});
+
+test('chunks large renderer requests without dropping items', () => {
+  const items = Array.from({ length: 1001 }, (_, index) => index);
+  const chunks = viewUtils.chunkItems?.(items, 500);
+  assert.deepEqual(chunks.map((chunk) => chunk.length), [500, 500, 1]);
+  assert.deepEqual(chunks.flat(), items);
+});
+
 test('filters profiles once and limits selection to visible browser matches', () => {
   const profiles = [
     { id: '1', browserType: 'chrome', name: 'Work' },
@@ -72,6 +121,25 @@ test('filters profiles once and limits selection to visible browser matches', ()
     viewUtils.filterProfiles?.(profiles, 'chrome', ' wo '),
     [profiles[0]],
   );
+});
+
+test('drops hidden selections when the active filter changes', () => {
+  assert.deepEqual(
+    [...(viewUtils.retainVisibleSelection?.(
+      new Set(['chrome-work', 'firefox-work']),
+      [{ id: 'chrome-work' }],
+    ) || [])],
+    ['chrome-work'],
+  );
+});
+
+test('treats all editable controls as keyboard shortcut boundaries', () => {
+  assert.equal(viewUtils.isEditableTarget?.({ tagName: 'INPUT' }), true);
+  assert.equal(viewUtils.isEditableTarget?.({ tagName: 'TEXTAREA' }), true);
+  assert.equal(viewUtils.isEditableTarget?.({ tagName: 'SELECT' }), true);
+  assert.equal(viewUtils.isEditableTarget?.({ tagName: 'BUTTON' }), true);
+  assert.equal(viewUtils.isEditableTarget?.({ tagName: 'DIV', isContentEditable: true }), true);
+  assert.equal(viewUtils.isEditableTarget?.({ tagName: 'DIV', isContentEditable: false }), false);
 });
 
 test('runs bulk work with a fixed concurrency limit and preserves result order', async () => {
@@ -108,9 +176,40 @@ test('normalizes bulk statuses without treating unknown recovered processes as r
     viewUtils.normalizeStatusSnapshot?.({
       work: { running: true },
       stale: { running: true, verificationUnavailable: true },
+      retryable: {
+        running: true,
+        verificationUnavailable: true,
+        closeRetryAvailable: true,
+      },
       closed: { running: false },
     }),
-    { runningIds: ['work'], unknownIds: ['stale'] },
+    {
+      runningIds: ['work'],
+      unknownIds: ['stale', 'retryable'],
+      retryableCloseIds: ['retryable'],
+    },
+  );
+});
+
+test('maps retryable unknown status to the safe close action', () => {
+  assert.deepEqual(
+    viewUtils.getUnknownStatusPrimaryAction?.(true),
+    { action: 'closeBrowserOnly', label: '重试关闭', className: 'btn-danger' },
+  );
+  assert.deepEqual(
+    viewUtils.getUnknownStatusPrimaryAction?.(false),
+    { action: 'refresh-status', label: '重试', className: 'btn-warning' },
+  );
+});
+
+test('includes retryable unknown profiles in bulk close selection', () => {
+  assert.deepEqual(
+    viewUtils.filterCloseableProfileIds?.(
+      ['running', 'retryable', 'stopped'],
+      new Set(['running']),
+      new Set(['retryable']),
+    ),
+    ['running', 'retryable'],
   );
 });
 

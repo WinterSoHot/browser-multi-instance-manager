@@ -14,6 +14,11 @@ let defaultPaths = {};
 let currentPlatform = '';
 let browserValidity = {};
 
+function setSettingsBusy(busy) {
+  document.getElementById('saveSettings').disabled = busy;
+  document.getElementById('resetSettings').disabled = busy;
+}
+
 // Load settings on startup
 async function loadSettings() {
   const environment = await window.browserAPI.getBrowserEnvironment();
@@ -73,10 +78,16 @@ function renderBrowserSettings() {
     btn.addEventListener('click', async () => {
       const browserType = btn.dataset.browserType;
       const currentPath = document.getElementById(`path-${browserType}`).value;
-      const result = await window.browserAPI.browseFolder(currentPath);
-
-      if (result.success && result.path) {
-        document.getElementById(`path-${browserType}`).value = result.path;
+      btn.disabled = true;
+      try {
+        const result = await window.browserAPI.browseFolder(currentPath);
+        if (result.success && result.path) {
+          document.getElementById(`path-${browserType}`).value = result.path;
+        }
+      } catch (error) {
+        alert(`选择路径失败：${error.message}`);
+      } finally {
+        btn.disabled = false;
       }
     });
   });
@@ -84,35 +95,40 @@ function renderBrowserSettings() {
 
 // Save settings
 document.getElementById('saveSettings').addEventListener('click', async () => {
-  const newSettings = {};
+  setSettingsBusy(true);
+  try {
+    const newSettings = {};
 
-  for (const browserType of Object.keys(browserNames)) {
-    const input = document.getElementById(`path-${browserType}`);
-    const value = input.value.trim();
+    for (const browserType of Object.keys(browserNames)) {
+      const input = document.getElementById(`path-${browserType}`);
+      const value = input.value.trim();
 
-    // Only save if user explicitly entered a value (not placeholder)
-    if (value && value !== defaultPaths[browserType]) {
-      newSettings[browserType] = value;
-    } else if (value === '') {
-      // User cleared the field - use default
-      newSettings[browserType] = '';
+      // Only save if user explicitly entered a value (not placeholder)
+      if (value && value !== defaultPaths[browserType]) {
+        newSettings[browserType] = value;
+      } else if (value === '') {
+        // User cleared the field - use default
+        newSettings[browserType] = '';
+      }
+      // If value equals default, leave it empty to keep automatic detection enabled.
     }
-    // If value equals default, we can either save it or leave it empty
-    // Let's save empty to indicate using default
+
+    const result = await window.browserAPI.setBrowserSettings(newSettings);
+    if (!result.success) {
+      alert(`保存设置失败：${result.error}`);
+      return;
+    }
+
+    const viewMode = document.getElementById('defaultViewMode').value;
+    localStorage.setItem('defaultViewMode', viewMode);
+
+    alert('设置已保存');
+    await loadSettings();
+  } catch (error) {
+    alert(`保存设置失败：${error.message}`);
+  } finally {
+    setSettingsBusy(false);
   }
-
-  const result = await window.browserAPI.setBrowserSettings(newSettings);
-  if (!result.success) {
-    alert(`保存设置失败：${result.error}`);
-    return;
-  }
-
-  // Save default view mode
-  const viewMode = document.getElementById('defaultViewMode').value;
-  localStorage.setItem('defaultViewMode', viewMode);
-
-  alert('设置已保存');
-  await loadSettings();
 });
 
 // Reset to default
@@ -121,13 +137,20 @@ document.getElementById('resetSettings').addEventListener('click', async () => {
     return;
   }
 
-  const result = await window.browserAPI.setBrowserSettings({});
-  if (!result.success) {
-    alert(`重置设置失败：${result.error}`);
-    return;
+  setSettingsBusy(true);
+  try {
+    const result = await window.browserAPI.setBrowserSettings({});
+    if (!result.success) {
+      alert(`重置设置失败：${result.error}`);
+      return;
+    }
+    await loadSettings();
+    alert('已重置为默认路径');
+  } catch (error) {
+    alert(`重置设置失败：${error.message}`);
+  } finally {
+    setSettingsBusy(false);
   }
-  await loadSettings();
-  alert('已重置为默认路径');
 });
 
 // Back to home

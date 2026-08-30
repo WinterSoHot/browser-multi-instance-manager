@@ -8,6 +8,16 @@ const {
   resolveInstalledBrowserPath,
 } = require("./lib/browser-paths");
 const { BrowserProcessManager } = require("./lib/browser-process-manager");
+const { createAsyncQueue } = require("./lib/async-queue");
+const {
+  createProfileOperationCoordinator,
+} = require("./lib/profile-operation-coordinator");
+const { terminateLaunchedProcessTree } = require("./lib/process-terminator");
+const { readTextFileBounded } = require("./lib/import-reader");
+const {
+  validateProfileId,
+  validateProfileIds,
+} = require("./lib/ipc-validation");
 const {
   inspectBrowserProcess,
   inspectBrowserProcesses,
@@ -35,11 +45,14 @@ const store = new Store({
     runningBrowserProcesses: [],
   },
 });
+const profileOperations = createProfileOperationCoordinator();
+const enqueueSettingsMutation = createAsyncQueue();
 
 let mainWindow;
 const browserProcessManager = new BrowserProcessManager({
   verifyProcess: inspectBrowserProcess,
   verifyProcesses: inspectBrowserProcesses,
+  terminateLaunchedProcess: terminateLaunchedProcessTree,
   onStateChange(records) {
     store.set("runningBrowserProcesses", records);
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -136,7 +149,7 @@ ipcMain.handle("get-profiles", () => {
   return store.get("profiles", []);
 });
 
-ipcMain.handle("add-profile", async (event, payload = {}) => {
+ipcMain.handle("add-profile", (event, payload = {}) => profileOperations.runGlobalMutation(async () => {
   const { browserType, profileName } = payload;
   try {
     validateProfileInput(browserType, profileName);
@@ -162,61 +175,66 @@ ipcMain.handle("add-profile", async (event, payload = {}) => {
   store.set("profiles", profiles);
 
   return { success: true, profile: newProfile };
-});
+}));
 
-ipcMain.handle("delete-profile", async (event, payload) => {
+ipcMain.handle("delete-profile", (event, payload) => {
   const { profileId, trashData = false } = typeof payload === "string"
     ? { profileId: payload }
     : (payload || {});
-  const profiles = store.get("profiles", []);
-  const profile = profiles.find((candidate) => candidate.id === profileId);
-  if (!profile) {
-    return { success: false, error: "Profile not found" };
-  }
-  const { running } = await browserProcessManager.getStatus(profileId, { force: true });
-  if (running) {
-    return { success: false, error: "Close the browser before removing its profile" };
-  }
+  return profileOperations.runMutation(profileId, async () => {
+    const profiles = store.get("profiles", []);
+    const profile = profiles.find((candidate) => candidate.id === profileId);
+    if (!profile) {
+      return { success: false, error: "Profile not found" };
+    }
+    const { running } = await browserProcessManager.getStatus(profileId, { force: true });
+    if (running) {
+      return { success: false, error: "Close the browser before removing its profile" };
+    }
 
-  if (trashData) {
+    if (trashData) {
+      if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
+        return { success: false, error: "Profile path is invalid" };
+      }
+      if (await pathExists(profile.path)) await shell.trashItem(profile.path);
+    }
+
+    const filteredProfiles = profiles.filter((p) => p.id !== profileId);
+    store.set("profiles", filteredProfiles);
+    return { success: true };
+  });
+});
+
+ipcMain.handle("launch-browser", (event, profileId) => profileOperations.runLifecycle(
+  profileId,
+  async () => {
+    const profiles = store.get("profiles", []);
+    const profile = profiles.find((p) => p.id === profileId);
+
+    if (!profile) {
+      return { success: false, error: "Profile not found" };
+    }
+
     if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
       return { success: false, error: "Profile path is invalid" };
     }
-    if (await pathExists(profile.path)) await shell.trashItem(profile.path);
-  }
 
-  const filteredProfiles = profiles.filter((p) => p.id !== profileId);
-  store.set("profiles", filteredProfiles);
-  return { success: true };
-});
+    const executablePath = getBrowserExecutable(profile.browserType);
+    if (!executablePath || !(await pathExists(executablePath))) {
+      return {
+        success: false,
+        error: `${profile.browserType} not found at ${executablePath}`,
+      };
+    }
 
-ipcMain.handle("launch-browser", async (event, profileId) => {
-  const profiles = store.get("profiles", []);
-  const profile = profiles.find((p) => p.id === profileId);
-
-  if (!profile) {
-    return { success: false, error: "Profile not found" };
-  }
-
-  if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
-    return { success: false, error: "Profile path is invalid" };
-  }
-
-  const executablePath = getBrowserExecutable(profile.browserType);
-  if (!executablePath || !(await pathExists(executablePath))) {
-    return {
-      success: false,
-      error: `${profile.browserType} not found at ${executablePath}`,
-    };
-  }
-
-  return browserProcessManager.launch({
-    profileId,
-    browserType: profile.browserType,
-    profilePath: profile.path,
-    executablePath,
-  });
-});
+    return browserProcessManager.launch({
+      profileId,
+      browserType: profile.browserType,
+      profilePath: profile.path,
+      executablePath,
+    });
+  },
+));
 
 ipcMain.handle("close-browser", async (event, profileId) => {
   return browserProcessManager.close(profileId);
@@ -227,65 +245,76 @@ ipcMain.handle("get-browser-status", (event, profileId) => {
 });
 
 ipcMain.handle("get-browser-statuses", (event, profileIds = []) => {
-  return browserProcessManager.getStatuses(profileIds);
+  return browserProcessManager.getStatuses(validateProfileIds(profileIds));
 });
 
 ipcMain.handle("refresh-browser-status", (event, profileId) => {
   return browserProcessManager.getStatus(profileId, { force: true });
 });
 
-ipcMain.handle("forget-browser-process", (event, profileId) => {
-  return browserProcessManager.forget(profileId);
-});
-
-ipcMain.handle("rename-profile", async (event, payload = {}) => {
-  const { profileId, newName } = payload;
-  const profiles = store.get("profiles", []);
-  const profileIndex = profiles.findIndex((p) => p.id === profileId);
-  if (profileIndex === -1) {
-    return { success: false, error: "Profile not found" };
+ipcMain.handle("forget-browser-process", (event, payload = {}) => {
+  const { profileId, acknowledgePossibleRunning = false } = payload;
+  if (typeof acknowledgePossibleRunning !== "boolean") {
+    return { success: false, error: "Invalid process record request" };
   }
-  const { running } = await browserProcessManager.getStatus(profileId, { force: true });
-  if (running) {
-    return { success: false, error: "Close the browser before renaming its profile" };
-  }
-
-  const profile = profiles[profileIndex];
   try {
-    validateProfileInput(profile.browserType, newName);
+    return browserProcessManager.forget(
+      validateProfileId(profileId),
+      { acknowledgePossibleRunning },
+    );
   } catch (error) {
     return { success: false, error: error.message };
   }
+});
 
-  // Check if new name already exists after validating the payload.
-  if (isDuplicateProfileName(profiles, profile.browserType, newName, profileId)) {
-    return { success: false, error: "Profile name already exists" };
-  }
-
-  if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
-    return { success: false, error: "Profile path is invalid" };
-  }
-
-  const oldPath = profile.path;
-  const newPath = resolveProfilePath(getProfilesDir(), profile.browserType, newName);
-
-  // Rename directory on filesystem
-  if (await pathExists(oldPath)) {
-    try {
-      await fsp.rename(oldPath, newPath);
-    } catch (error) {
-      return {
-        success: false,
-        error: "Failed to rename directory: " + error.message,
-      };
+ipcMain.handle("rename-profile", (event, payload = {}) => {
+  const { profileId, newName } = payload;
+  return profileOperations.runMutation(profileId, async () => {
+    const profiles = store.get("profiles", []);
+    const profileIndex = profiles.findIndex((p) => p.id === profileId);
+    if (profileIndex === -1) {
+      return { success: false, error: "Profile not found" };
     }
-  }
+    const { running } = await browserProcessManager.getStatus(profileId, { force: true });
+    if (running) {
+      return { success: false, error: "Close the browser before renaming its profile" };
+    }
 
-  profile.name = newName;
-  profile.path = newPath;
-  store.set("profiles", profiles);
+    const profile = profiles[profileIndex];
+    try {
+      validateProfileInput(profile.browserType, newName);
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
 
-  return { success: true, profile: profile };
+    if (isDuplicateProfileName(profiles, profile.browserType, newName, profileId)) {
+      return { success: false, error: "Profile name already exists" };
+    }
+
+    if (!isStoredProfilePathSafe(getProfilesDir(), profile)) {
+      return { success: false, error: "Profile path is invalid" };
+    }
+
+    const oldPath = profile.path;
+    const newPath = resolveProfilePath(getProfilesDir(), profile.browserType, newName);
+
+    if (await pathExists(oldPath)) {
+      try {
+        await fsp.rename(oldPath, newPath);
+      } catch (error) {
+        return {
+          success: false,
+          error: "Failed to rename directory: " + error.message,
+        };
+      }
+    }
+
+    profile.name = newName;
+    profile.path = newPath;
+    store.set("profiles", profiles);
+
+    return { success: true, profile: profile };
+  });
 });
 
 ipcMain.handle("open-profile-folder", async (event, profileId) => {
@@ -311,7 +340,7 @@ ipcMain.handle("open-profile-folder", async (event, profileId) => {
   return { success: true };
 });
 
-ipcMain.handle("clone-profile", async (event, profileId) => {
+ipcMain.handle("clone-profile", (event, profileId) => profileOperations.runGlobalMutation(async () => {
   const profiles = store.get("profiles", []);
   const source = profiles.find((profile) => profile.id === profileId);
   if (!source) return { success: false, error: "Profile not found" };
@@ -326,7 +355,7 @@ ipcMain.handle("clone-profile", async (event, profileId) => {
   profiles.push(profile);
   store.set("profiles", profiles);
   return { success: true, profile };
-});
+}));
 
 ipcMain.handle("get-profile-size", async (event, profileId) => {
   const profile = store.get("profiles", []).find((candidate) => candidate.id === profileId);
@@ -363,27 +392,30 @@ ipcMain.handle("import-profiles", async () => {
   }
 
   try {
-    const document = JSON.parse(await fsp.readFile(result.filePaths[0], "utf8"));
+    const importPath = result.filePaths[0];
+    const document = JSON.parse(await readTextFileBounded(importPath));
     const importedMetadata = validateProfileImportDocument(document);
-    const profiles = store.get("profiles", []);
-    const imported = [];
-    let skipped = 0;
-    for (const metadata of importedMetadata) {
-      if (isDuplicateProfileName(profiles, metadata.browserType, metadata.name)) {
-        skipped += 1;
-        continue;
+    return await profileOperations.runGlobalMutation(async () => {
+      const profiles = store.get("profiles", []);
+      const imported = [];
+      let skipped = 0;
+      for (const metadata of importedMetadata) {
+        if (isDuplicateProfileName(profiles, metadata.browserType, metadata.name)) {
+          skipped += 1;
+          continue;
+        }
+        const profilePath = await createProfileDir(metadata.browserType, metadata.name);
+        const profile = createProfileRecord({
+          browserType: metadata.browserType,
+          profileName: metadata.name,
+          profilePath,
+        });
+        profiles.push(profile);
+        imported.push(profile);
       }
-      const profilePath = await createProfileDir(metadata.browserType, metadata.name);
-      const profile = createProfileRecord({
-        browserType: metadata.browserType,
-        profileName: metadata.name,
-        profilePath,
-      });
-      profiles.push(profile);
-      imported.push(profile);
-    }
-    store.set("profiles", profiles);
-    return { success: true, profiles: imported, skipped };
+      store.set("profiles", profiles);
+      return { success: true, profiles: imported, skipped };
+    });
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -394,7 +426,7 @@ ipcMain.handle("get-browser-settings", () => {
   return store.get("browserSettings", {});
 });
 
-ipcMain.handle("set-browser-settings", async (event, settings) => {
+ipcMain.handle("set-browser-settings", (event, settings) => enqueueSettingsMutation(async () => {
   try {
     const validatedSettings = validateBrowserSettings(settings);
     for (const [browserType, configuredPath] of Object.entries(validatedSettings)) {
@@ -409,7 +441,7 @@ ipcMain.handle("set-browser-settings", async (event, settings) => {
   } catch (error) {
     return { success: false, error: error.message };
   }
-});
+}));
 
 ipcMain.handle("get-default-browser-path", (event, browserType) => {
   const defaultPaths = getDefaultBrowserPaths();

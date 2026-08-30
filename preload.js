@@ -15,7 +15,8 @@ contextBridge.exposeInMainWorld('browserAPI', {
   getBrowserStatus: (profileId) => ipcRenderer.invoke('get-browser-status', profileId),
   getBrowserStatuses: (profileIds) => ipcRenderer.invoke('get-browser-statuses', profileIds),
   refreshBrowserStatus: (profileId) => ipcRenderer.invoke('refresh-browser-status', profileId),
-  forgetBrowserProcess: (profileId) => ipcRenderer.invoke('forget-browser-process', profileId),
+  forgetBrowserProcess: (profileId, acknowledgePossibleRunning = false) =>
+    ipcRenderer.invoke('forget-browser-process', { profileId, acknowledgePossibleRunning }),
   onBrowserStatusesChanged: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('browser-statuses-changed', listener);
