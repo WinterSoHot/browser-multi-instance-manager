@@ -27,6 +27,7 @@ const {
 const { createWindowAfterInitialization } = require("./lib/window-lifecycle");
 const {
   filterRestorableProcessRecords,
+  resolveProfilePath,
   validateBrowserSettings,
 } = require("./lib/profile-utils");
 
