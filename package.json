@@ -35,6 +35,9 @@
     "files": [
       "main.js",
       "preload.js",
+      "build/icons/trayIcon.png",
+      "build/icons/trayTemplate.png",
+      "build/icons/trayTemplate@2x.png",
       "lib/**/*",
       "renderer/**/*",
       "package.json"

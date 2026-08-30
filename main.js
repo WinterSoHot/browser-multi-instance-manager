@@ -241,6 +241,10 @@ async function showMainWindow() {
   mainWindow.focus();
 }
 
+function showMainWindowFromAppEvent() {
+  void showMainWindow().catch(() => {});
+}
+
 function createTrayIcon() {
   const iconName = process.platform === "darwin" ? "trayTemplate.png" : "trayIcon.png";
   const icon = nativeImage.createFromPath(path.join(__dirname, "build", "icons", iconName));
@@ -308,10 +312,10 @@ if (typeof store.onDidAnyChange === "function") {
 }
 
 void initializationPromise.then(() => trayManager.create()).catch(() => {});
-void showMainWindow();
+showMainWindowFromAppEvent();
 
 app.on("activate", () => {
-  void showMainWindow();
+  showMainWindowFromAppEvent();
 });
 
 app.on("before-quit", (event) => {

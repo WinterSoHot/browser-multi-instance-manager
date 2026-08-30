@@ -225,7 +225,7 @@ test('a synchronous application-quit failure leaves the lifecycle retryable', as
   assert.equal(firstResult, false);
   assert.equal(harness.lifecycle.isQuitting(), false);
   assert.equal(await harness.lifecycle.requestQuit(), true);
-  assert.equal(destroyCalls, 2);
+  assert.equal(destroyCalls, 1);
   assert.equal(quitAttempts, 2);
   assert.deepEqual(harness.forcedSnapshotOptions, [{ force: true }, { force: true }]);
 });

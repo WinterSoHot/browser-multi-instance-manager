@@ -8,7 +8,7 @@ function waitForMainTurn() {
   return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
 }
 
-async function loadMain({ profiles = [], platform = process.platform } = {}) {
+async function loadMain({ profiles = [], platform = process.platform, showError = null } = {}) {
   const originalLoad = Module._load;
   const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
   const mainPath = path.join(__dirname, '..', 'main.js');
@@ -36,7 +36,10 @@ async function loadMain({ profiles = [], platform = process.platform } = {}) {
     isDestroyed() { return this.destroyed; }
     isMinimized() { return false; }
     restore() {}
-    show() { this.showCalls += 1; }
+    show() {
+      this.showCalls += 1;
+      if (showError) throw showError;
+    }
     focus() { this.focusCalls += 1; }
     hide() {}
     detachWithoutClosedEvent() {
@@ -221,4 +224,19 @@ test('main chooses the template asset only on macOS and a separate icon on Windo
   assert.match(mac.iconPaths[0], /trayTemplate\.png$/u);
   assert.match(windows.iconPaths[0], /trayIcon\.png$/u);
   assert.match(linux.iconPaths[0], /trayIcon\.png$/u);
+});
+
+test('main consumes initial and activate window-show failures', async () => {
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const harness = await loadMain({ showError: new Error('window unavailable') });
+    harness.app.emit('activate');
+    await waitForMainTurn();
+
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandled);
+  }
 });

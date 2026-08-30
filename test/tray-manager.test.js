@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { createAppLifecycle } = require('../lib/app-lifecycle');
 
 let trayManager = {};
 try {
@@ -44,6 +45,8 @@ function createHarness({
   listFavoriteProfiles,
   getStatuses,
   launchProfiles,
+  showWindow,
+  requestQuit,
   debounceMs = 5,
 } = {}) {
   const templates = [];
@@ -81,8 +84,8 @@ function createHarness({
     Tray: FakeTray,
     Menu: { buildFromTemplate: (template) => template },
     createTrayIcon: () => 'safe-icon',
-    showWindow: () => { showCalls += 1; },
-    requestQuit: () => { quitCalls += 1; },
+    showWindow: showWindow || (() => { showCalls += 1; }),
+    requestQuit: requestQuit || (() => { quitCalls += 1; }),
     listProfiles: listProfiles || (() => profiles),
     listFavoriteProfiles: listFavoriteProfiles || (() => profiles.filter((item) => item.favorite)),
     listWorkspaces: () => workspaces,
@@ -234,6 +237,65 @@ test('tray double-click restores the existing window and destroy cancels queued 
   assert.equal(harness.trays[0].destroyed, true);
   assert.equal(harness.templates.length, initialMenus);
   assert.equal(harness.trays[0].handlers.has('double-click'), false);
+});
+
+test('Electron tray callbacks consume asynchronous callback failures', async () => {
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const harness = createHarness({
+      profiles: Array.from({ length: 21 }, (_, index) => profile(`id-${index}`, `Profile ${index}`)),
+      showWindow: async () => { throw new Error('window unavailable'); },
+      requestQuit: async () => { throw new Error('quit unavailable'); },
+    });
+    await harness.manager.create();
+    const menu = harness.templates.at(-1);
+
+    assert.equal(harness.trays[0].handlers.get('double-click')(), undefined);
+    assert.equal(findItem(menu, '打开主界面').click(), undefined);
+    assert.equal(findItem(menu, '更多请在主界面操作').click(), undefined);
+    assert.equal(findItem(menu, '退出管理器').click(), undefined);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandled);
+  }
+});
+
+test('a rejected quit keeps the tray available for a successful retry', async () => {
+  let manager;
+  let destroyCalls = 0;
+  let quitCalls = 0;
+  const lifecycle = createAppLifecycle({
+    platform: 'darwin',
+    getCloseToTray: () => true,
+    getActiveStatusCount: () => ({ running: 0, unknown: 0 }),
+    confirmExit: async () => true,
+    hideWindow: () => {},
+    destroyTray: async () => {
+      destroyCalls += 1;
+      await manager.destroy();
+    },
+    quitApp: async () => {
+      quitCalls += 1;
+      if (quitCalls === 1) throw new Error('application quit rejected');
+    },
+  });
+  const harness = createHarness({ requestQuit: lifecycle.requestQuit });
+  manager = harness.manager;
+
+  await manager.create();
+  assert.equal(await lifecycle.requestQuit(), false);
+  assert.equal(destroyCalls, 0);
+  assert.equal(lifecycle.isQuitting(), false);
+
+  assert.equal(harness.trays[0].handlers.get('double-click')(), undefined);
+  assert.equal(harness.showCalls, 1);
+  assert.equal(await lifecycle.requestQuit(), true);
+  assert.equal(destroyCalls, 1);
+  assert.equal(harness.trays[0].destroyed, true);
 });
 
 test('tray manager uses favorite profiles as its status scope when no full profile lister is supplied', async () => {
