@@ -41,6 +41,7 @@ function createLifecycle({
   getActiveStatusCount,
   confirmResult = true,
   destroyTray,
+  quitApp,
 } = {}) {
   let hideCalls = 0;
   let confirmCalls = 0;
@@ -66,9 +67,9 @@ function createLifecycle({
     destroyTray: destroyTray || (() => {
       destroyCalls += 1;
     }),
-    quitApp: () => {
+    quitApp: quitApp || (() => {
       quitCalls += 1;
-    },
+    }),
   });
 
   return {
@@ -197,6 +198,58 @@ test('tray destruction errors do not prevent an approved application exit', asyn
   assert.equal(destroyCalls, 1);
   assert.equal(harness.quitCalls, 1);
   assert.equal(harness.lifecycle.isQuitting(), true);
+});
+
+test('a synchronous application-quit failure leaves the lifecycle retryable', async () => {
+  let destroyCalls = 0;
+  let quitAttempts = 0;
+  const harness = createLifecycle({
+    destroyTray: () => {
+      destroyCalls += 1;
+      if (destroyCalls === 2) {
+        throw new Error('tray already destroyed');
+      }
+    },
+    quitApp: () => {
+      quitAttempts += 1;
+      if (quitAttempts === 1) {
+        throw new Error('application quit failed');
+      }
+    },
+  });
+  let firstResult;
+
+  await assert.doesNotReject(async () => {
+    firstResult = await harness.lifecycle.requestQuit();
+  });
+  assert.equal(firstResult, false);
+  assert.equal(harness.lifecycle.isQuitting(), false);
+  assert.equal(await harness.lifecycle.requestQuit(), true);
+  assert.equal(destroyCalls, 2);
+  assert.equal(quitAttempts, 2);
+  assert.deepEqual(harness.forcedSnapshotOptions, [{ force: true }, { force: true }]);
+});
+
+test('a rejected application-quit promise leaves the lifecycle retryable', async () => {
+  let quitAttempts = 0;
+  const harness = createLifecycle({
+    quitApp: async () => {
+      quitAttempts += 1;
+      if (quitAttempts === 1) {
+        throw new Error('application quit rejected');
+      }
+    },
+  });
+  let firstResult;
+
+  await assert.doesNotReject(async () => {
+    firstResult = await harness.lifecycle.requestQuit();
+  });
+  assert.equal(firstResult, false);
+  assert.equal(harness.lifecycle.isQuitting(), false);
+  assert.equal(await harness.lifecycle.requestQuit(), true);
+  assert.equal(quitAttempts, 2);
+  assert.deepEqual(harness.forcedSnapshotOptions, [{ force: true }, { force: true }]);
 });
 
 test('repeated quit requests share one snapshot and confirmation', async () => {
