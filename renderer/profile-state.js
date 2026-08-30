@@ -56,6 +56,13 @@
       retainVisibleSelections();
     }
 
+    function updateProfile(profileId, changes) {
+      profiles = profiles.map((profile) => (
+        profile.id === profileId ? { ...profile, ...changes } : profile
+      ));
+      retainVisibleSelections();
+    }
+
     function setStatuses(statuses) {
       runningIds = new Set(statuses.runningIds || []);
       unknownIds = new Set(statuses.unknownIds || []);
@@ -97,6 +104,7 @@
     return {
       getSnapshot,
       setProfiles,
+      updateProfile,
       setStatuses,
       setFilter,
       setQuery,

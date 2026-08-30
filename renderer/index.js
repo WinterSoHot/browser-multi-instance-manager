@@ -513,12 +513,10 @@ document.getElementById('confirmRename').addEventListener('click', async () => {
   const result = await window.browserAPI.renameProfile(currentRenameId, newName);
 
   if (result.success) {
-    const p = profiles.find(p => p.id === currentRenameId);
-    if (p) {
-      p.name = result.profile.name;
-      p.path = result.profile.path;
-    }
-    profileState.setProfiles(profiles);
+    profileState.updateProfile(currentRenameId, {
+      name: result.profile.name,
+      path: result.profile.path,
+    });
     renderProfiles();
     closeModal();
     showToast(`已重命名为 "${newName}"`, 'success');

@@ -37,6 +37,28 @@ test('profile replacements remove selections that are no longer visible', () => 
   assert.deepEqual(state.getSnapshot().selectedIds, ['firefox-1']);
 });
 
+test('profile updates retain profiles appended after an earlier snapshot', () => {
+  const state = createProfileState({ profiles });
+  const appendedProfile = {
+    id: 'edge-1',
+    browserType: 'edge',
+    name: 'New profile',
+  };
+  state.setProfiles([...state.getSnapshot().profiles, appendedProfile]);
+
+  state.updateProfile('chrome-1', { name: 'Renamed work', path: '/renamed' });
+
+  assert.deepEqual(
+    state.getSnapshot().profiles.map(({ id, name }) => ({ id, name })),
+    [
+      { id: 'chrome-1', name: 'Renamed work' },
+      { id: 'firefox-1', name: 'Personal' },
+      { id: 'chrome-2', name: 'Research' },
+      { id: 'edge-1', name: 'New profile' },
+    ],
+  );
+});
+
 test('selection toggles and clears without changing profile order', () => {
   const state = createProfileState({ profiles });
   state.toggleSelection('firefox-1');
