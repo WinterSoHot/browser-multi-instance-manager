@@ -17,6 +17,8 @@ function createServiceFixture({
   importDocument = null,
   saveDialogResult = { canceled: false, filePath: '/exports/profiles.json' },
   openDialogResult = { canceled: false, filePaths: ['/imports/profiles.json'] },
+  launchResult = { success: true, pid: 42 },
+  now = () => new Date().toISOString(),
 } = {}) {
   let storeState = { profiles: structuredClone(profiles) };
   const createdDirectories = [];
@@ -43,7 +45,7 @@ function createServiceFixture({
       getStatus: async () => structuredClone(browserStatus),
       launch: async (options) => {
         launches.push(options);
-        return { success: true, pid: 42 };
+        return structuredClone(launchResult);
       },
     },
     getBrowserExecutable: () => executablePath,
@@ -75,6 +77,7 @@ function createServiceFixture({
     writeExportFile: async (filePath, content) => {
       exportedFiles.push({ filePath, content });
     },
+    now,
   });
 
   return {
@@ -171,6 +174,85 @@ test('launch validates the stored path and delegates only valid profile launches
     profilePath: '/profiles/chrome/Work',
     executablePath: '/Applications/Google Chrome.app',
   }]);
+});
+
+test('only a successful launch records the current last-launched timestamp', async () => {
+  const profile = {
+    id: 'p1',
+    browserType: 'chrome',
+    name: 'Work',
+    path: '/profiles/chrome/Work',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    lastLaunchedAt: null,
+  };
+  const fixture = createServiceFixture({
+    profiles: [profile],
+    existingPaths: [profile.path, '/Applications/Google Chrome.app'],
+    now: () => '2026-01-02T03:04:05.000Z',
+  });
+
+  assert.deepEqual(await fixture.service.launch('p1'), { success: true, pid: 42 });
+  assert.equal(
+    fixture.storeState().profiles[0].lastLaunchedAt,
+    '2026-01-02T03:04:05.000Z',
+  );
+});
+
+test('failed or already-running launches leave last-launched timestamps unchanged', async () => {
+  const profile = {
+    id: 'p1',
+    browserType: 'chrome',
+    name: 'Work',
+    path: '/profiles/chrome/Work',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    lastLaunchedAt: '2026-01-01T12:00:00.000Z',
+  };
+  for (const launchResult of [
+    { success: false, error: 'Failed to launch browser' },
+    { success: false, error: 'Browser is already running' },
+  ]) {
+    const fixture = createServiceFixture({
+      profiles: [profile],
+      existingPaths: [profile.path, '/Applications/Google Chrome.app'],
+      launchResult,
+      now: () => '2026-01-02T03:04:05.000Z',
+    });
+
+    assert.deepEqual(await fixture.service.launch('p1'), launchResult);
+    assert.equal(fixture.storeState().profiles[0].lastLaunchedAt, profile.lastLaunchedAt);
+  }
+});
+
+test('markLaunched replaces only the targeted profile metadata', async () => {
+  const profiles = [
+    {
+      id: 'p1',
+      browserType: 'chrome',
+      name: 'Work',
+      path: '/profiles/chrome/Work',
+      lastLaunchedAt: null,
+    },
+    {
+      id: 'p2',
+      browserType: 'firefox',
+      name: 'Personal',
+      path: '/profiles/firefox/Personal',
+      lastLaunchedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ];
+  const fixture = createServiceFixture({ profiles });
+
+  assert.deepEqual(
+    await fixture.service.markLaunched('p1', '2026-01-02T03:04:05.000Z'),
+    {
+      success: true,
+      profile: { ...profiles[0], lastLaunchedAt: '2026-01-02T03:04:05.000Z' },
+    },
+  );
+  assert.deepEqual(fixture.storeState().profiles, [
+    { ...profiles[0], lastLaunchedAt: '2026-01-02T03:04:05.000Z' },
+    profiles[1],
+  ]);
 });
 
 test('export and import keep only profile metadata and skip duplicate names', async () => {

@@ -95,3 +95,23 @@ test('status and sort transitions are exposed through isolated snapshots', () =>
   assert.deepEqual(state.getSnapshot().runningIds, ['chrome-1']);
   assert.deepEqual(state.getSnapshot().selectedIds, []);
 });
+
+test('visible profiles apply the selected sort to the current status snapshot', () => {
+  const state = createProfileState({
+    profiles: [
+      { id: 'stopped', browserType: 'chrome', name: 'Alpha' },
+      { id: 'unknown', browserType: 'chrome', name: 'Zulu' },
+      { id: 'running', browserType: 'chrome', name: 'Bravo' },
+    ],
+  });
+  state.setStatuses({
+    runningIds: ['running'],
+    unknownIds: ['unknown'],
+  });
+  state.setSort('status');
+
+  assert.deepEqual(
+    state.getVisibleProfiles().map((profile) => profile.id),
+    ['running', 'unknown', 'stopped'],
+  );
+});

@@ -13,6 +13,7 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, ({
   filterProfiles,
   retainVisibleSelection,
+  sortProfiles,
 }) => {
   function cloneProfiles(profiles) {
     return profiles.map((profile) => ({ ...profile }));
@@ -29,7 +30,11 @@
     let sort = initial.sort || 'default';
 
     function getVisibleProfileRecords() {
-      return filterProfiles(profiles, filter, query);
+      return sortProfiles(
+        filterProfiles(profiles, filter, query),
+        sort,
+        { runningIds, unknownIds },
+      );
     }
 
     function retainVisibleSelections() {

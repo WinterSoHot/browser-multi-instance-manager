@@ -115,6 +115,74 @@
     return new Set([...selectedIds].filter((profileId) => visibleIds.has(profileId)));
   }
 
+  function normalizeProfileName(profile) {
+    return String(profile?.name || '')
+      .trim()
+      .normalize('NFKC')
+      .toLocaleLowerCase();
+  }
+
+  function timestampValue(timestamp) {
+    const value = Date.parse(timestamp || '');
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function containsProfileId(profileIds, profileId) {
+    return profileIds instanceof Set
+      ? profileIds.has(profileId)
+      : Array.isArray(profileIds) && profileIds.includes(profileId);
+  }
+
+  function getStatusRank(profileId, statusSnapshot = {}) {
+    if (containsProfileId(statusSnapshot.unknownIds, profileId)) return 1;
+    if (containsProfileId(statusSnapshot.runningIds, profileId)) return 0;
+
+    const status = statusSnapshot[profileId];
+    if (status?.verificationUnavailable) return 1;
+    if (status?.running) return 0;
+    return 2;
+  }
+
+  function sortProfiles(profiles, sortMode, statusSnapshot = {}) {
+    if (!['name', 'created-desc', 'recent-desc', 'status'].includes(sortMode)) {
+      return [...profiles];
+    }
+
+    return profiles
+      .map((profile, index) => ({ profile, index }))
+      .sort((left, right) => {
+        if (sortMode === 'created-desc') {
+          const difference = (timestampValue(right.profile.createdAt) || 0)
+            - (timestampValue(left.profile.createdAt) || 0);
+          if (difference !== 0) return difference;
+        }
+
+        if (sortMode === 'recent-desc') {
+          const leftTimestamp = timestampValue(left.profile.lastLaunchedAt);
+          const rightTimestamp = timestampValue(right.profile.lastLaunchedAt);
+          if (leftTimestamp === null || rightTimestamp === null) {
+            if (leftTimestamp !== null) return -1;
+            if (rightTimestamp !== null) return 1;
+          } else if (rightTimestamp !== leftTimestamp) {
+            return rightTimestamp - leftTimestamp;
+          }
+        }
+
+        if (sortMode === 'status') {
+          const difference = getStatusRank(left.profile.id, statusSnapshot)
+            - getStatusRank(right.profile.id, statusSnapshot);
+          if (difference !== 0) return difference;
+        }
+
+        const leftName = normalizeProfileName(left.profile);
+        const rightName = normalizeProfileName(right.profile);
+        if (leftName < rightName) return -1;
+        if (leftName > rightName) return 1;
+        return left.index - right.index;
+      })
+      .map(({ profile }) => profile);
+  }
+
   function isEditableTarget(target) {
     const tagName = String(target?.tagName || '').toUpperCase();
     return target?.isContentEditable === true
@@ -196,6 +264,7 @@
     chunkItems,
     filterProfiles,
     retainVisibleSelection,
+    sortProfiles,
     isEditableTarget,
     mapWithConcurrency,
     normalizeStatusSnapshot,

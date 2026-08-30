@@ -133,6 +133,57 @@ test('drops hidden selections when the active filter changes', () => {
   );
 });
 
+test('sorts profiles deterministically across name, creation, recent use, and status', () => {
+  const profiles = [
+    {
+      id: 'p3',
+      name: '  Zulu ',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      lastLaunchedAt: null,
+    },
+    {
+      id: 'p2',
+      name: 'alpha',
+      createdAt: '2026-01-03T00:00:00.000Z',
+      lastLaunchedAt: '2026-01-05T00:00:00.000Z',
+    },
+    {
+      id: 'p1',
+      name: 'Bravo',
+      createdAt: '2026-01-02T00:00:00.000Z',
+      lastLaunchedAt: '2026-01-04T00:00:00.000Z',
+    },
+    {
+      id: 'p4',
+      name: 'ALPHA',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      lastLaunchedAt: '2026-01-05T00:00:00.000Z',
+    },
+  ];
+  const statusSnapshot = {
+    runningIds: ['p1'],
+    unknownIds: ['p2'],
+  };
+
+  assert.deepEqual(
+    viewUtils.sortProfiles?.(profiles, 'name', statusSnapshot).map((profile) => profile.id),
+    ['p2', 'p4', 'p1', 'p3'],
+  );
+  assert.deepEqual(
+    viewUtils.sortProfiles?.(profiles, 'created-desc', statusSnapshot).map((profile) => profile.id),
+    ['p2', 'p1', 'p4', 'p3'],
+  );
+  assert.deepEqual(
+    viewUtils.sortProfiles?.(profiles, 'recent-desc', statusSnapshot).map((profile) => profile.id),
+    ['p2', 'p4', 'p1', 'p3'],
+  );
+  assert.deepEqual(
+    viewUtils.sortProfiles?.(profiles, 'status', statusSnapshot).map((profile) => profile.id),
+    ['p1', 'p2', 'p4', 'p3'],
+  );
+  assert.deepEqual(profiles.map((profile) => profile.id), ['p3', 'p2', 'p1', 'p4']);
+});
+
 test('treats all editable controls as keyboard shortcut boundaries', () => {
   assert.equal(viewUtils.isEditableTarget?.({ tagName: 'INPUT' }), true);
   assert.equal(viewUtils.isEditableTarget?.({ tagName: 'TEXTAREA' }), true);
