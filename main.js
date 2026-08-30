@@ -15,6 +15,7 @@ const { createBrowserSettingsService } = require("./lib/browser-settings-service
 const { createProfileService } = require("./lib/profile-service");
 const { createImportExportService } = require("./lib/import-export-service");
 const { createWorkspaceService } = require("./lib/workspace-service");
+const { createDiagnosticsService } = require("./lib/diagnostics-service");
 const {
   createProfileOperationCoordinator,
 } = require("./lib/profile-operation-coordinator");
@@ -144,6 +145,16 @@ const workspaceService = createWorkspaceService({
   now: () => new Date().toISOString(),
 });
 
+const diagnosticsService = createDiagnosticsService({
+  appStore,
+  profileOperations,
+  browserProcessManager,
+  getBrowserExecutable: settingsService.getExecutable,
+  getProfilesDir,
+  pathExists,
+  createProfileDir,
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 800,
@@ -165,6 +176,7 @@ const unregisterIpcHandlers = registerIpcHandlers({
   browserProcessManager,
   settingsService,
   workspaceService,
+  diagnosticsService,
 });
 
 const initializationPromise = app.whenReady().then(async () => {

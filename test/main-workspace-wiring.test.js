@@ -103,6 +103,17 @@ function loadMainWithFakes() {
         },
       };
     }
+    if (request === './lib/diagnostics-service') {
+      return {
+        createDiagnosticsService(options) {
+          serviceOptions.diagnostics = options;
+          return {
+            inspect: () => ({ code: 'HEALTHY', state: 'healthy', actions: [] }),
+            repairMissingDirectory: () => ({ success: false, code: 'DIRECTORY_PRESENT' }),
+          };
+        },
+      };
+    }
     return originalLoad.call(this, request, parent, isMain);
   };
   try {
@@ -134,4 +145,15 @@ test('main constructs the import service with safe directory primitives and give
   assert.equal(typeof serviceOptions.importExport.getProfilePath, 'function');
   assert.equal(typeof serviceOptions.importExport.removeEmptyDirectory, 'function');
   assert.equal(serviceOptions.profile.importExportService, serviceOptions.importService);
+});
+
+test('main constructs diagnostics with the shared profile coordinator and injects it into IPC', async () => {
+  const { handlers, serviceOptions } = loadMainWithFakes();
+
+  assert.equal(serviceOptions.diagnostics.profileOperations, serviceOptions.profile.profileOperations);
+  assert.equal(typeof serviceOptions.diagnostics.getProfilesDir, 'function');
+  assert.equal(typeof serviceOptions.diagnostics.createProfileDir, 'function');
+  assert.deepEqual(await handlers.get('inspect-profile-diagnostics')({}, 'profile-1'), {
+    code: 'HEALTHY', state: 'healthy', actions: [],
+  });
 });

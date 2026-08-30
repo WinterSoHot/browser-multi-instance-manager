@@ -85,3 +85,15 @@ test('preload exposes only the two-phase import calls', async () => {
   ]);
   assert.equal(browserApi.importProfiles, undefined);
 });
+
+test('preload exposes narrow diagnostics calls that accept only a profile ID', async () => {
+  const { browserApi, invocations } = loadBrowserApi();
+
+  await browserApi.inspectProfileDiagnostics('profile-1');
+  await browserApi.repairProfileDirectory('profile-1');
+
+  assert.deepEqual(JSON.parse(JSON.stringify(invocations)), [
+    { channel: 'inspect-profile-diagnostics', args: ['profile-1'] },
+    { channel: 'repair-profile-directory', args: ['profile-1'] },
+  ]);
+});

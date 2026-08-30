@@ -32,6 +32,8 @@ const expectedChannels = [
   'delete-workspace',
   'assign-profile-workspace',
   'set-profile-favorite',
+  'inspect-profile-diagnostics',
+  'repair-profile-directory',
 ];
 
 function createHandlerFixture({
@@ -39,6 +41,7 @@ function createHandlerFixture({
   browserProcessManager: processOverrides = {},
   settingsService: settingsOverrides = {},
   workspaceService: workspaceOverrides = {},
+  diagnosticsService: diagnosticsOverrides = {},
 } = {}) {
   const handlers = new Map();
   const ipcMain = {
@@ -91,6 +94,11 @@ function createHandlerFixture({
       setFavorite: () => {},
       ...workspaceOverrides,
     },
+    diagnosticsService: {
+      inspect: () => {},
+      repairMissingDirectory: () => {},
+      ...diagnosticsOverrides,
+    },
   };
 
   const unregister = registerIpcHandlers(dependencies);
@@ -116,6 +124,47 @@ test('registers each existing IPC channel once and unregisters cleanly', () => {
 test('IPC removes the legacy one-shot import channel', () => {
   const { handlers } = createHandlerFixture();
   assert.equal(handlers.has('import-profiles'), false);
+});
+
+test('diagnostics IPC accepts only a profile ID and never forwards service exceptions', async () => {
+  const calls = [];
+  const { handlers } = createHandlerFixture({
+    diagnosticsService: {
+      inspect(profileId) {
+        calls.push({ method: 'inspect', profileId });
+        return { code: 'HEALTHY', state: 'healthy', actions: [] };
+      },
+      repairMissingDirectory(profileId) {
+        calls.push({ method: 'repair', profileId });
+        return { success: true, code: 'DIRECTORY_RECREATED' };
+      },
+    },
+  });
+
+  assert.deepEqual(
+    await handlers.get('inspect-profile-diagnostics')({}, 'profile-1'),
+    { code: 'HEALTHY', state: 'healthy', actions: [] },
+  );
+  assert.deepEqual(
+    await handlers.get('repair-profile-directory')({}, 'profile-1'),
+    { success: true, code: 'DIRECTORY_RECREATED' },
+  );
+  assert.deepEqual(calls, [
+    { method: 'inspect', profileId: 'profile-1' },
+    { method: 'repair', profileId: 'profile-1' },
+  ]);
+  assert.throws(
+    () => handlers.get('inspect-profile-diagnostics')({}, ''),
+    /Invalid profile ID/,
+  );
+
+  const failures = createHandlerFixture({
+    diagnosticsService: { inspect: async () => { throw new Error('/private/path'); } },
+  });
+  assert.deepEqual(
+    await failures.handlers.get('inspect-profile-diagnostics')({}, 'profile-1'),
+    { code: 'DIAGNOSTICS_UNAVAILABLE', state: 'process-unknown', actions: ['retry'] },
+  );
 });
 
 test('profile IPC delegates the original payload and forwards the service result', async () => {

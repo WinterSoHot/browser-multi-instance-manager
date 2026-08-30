@@ -205,6 +205,16 @@
     </div>
   </div>
 
+  <div id="diagnosticsModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="diagnosticsModalTitle" aria-describedby="diagnosticsModalBody">
+    <div class="modal-content diagnostics-modal-content">
+      <h3 id="diagnosticsModalTitle">配置诊断</h3>
+      <div id="diagnosticsModalBody" aria-live="polite"></div>
+      <div class="modal-actions">
+        <button id="closeDiagnostics" type="button" class="btn btn-secondary">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
@@ -212,6 +222,7 @@
   <script src="profile-state.js"></script>
   <script src="workspace-batch.js"></script>
   <script src="import-preview.js"></script>
+  <script src="diagnostics-view.js"></script>
   <script src="index.js"></script>
 </body>
 </html>

@@ -23,6 +23,10 @@ const {
   hasValidImportToken,
   renderImportPreview,
 } = window.ImportPreview;
+const {
+  createDiagnosticsViewState,
+  getDiagnosticBadge,
+} = window.diagnosticsView;
 
 const profileState = createProfileState();
 let currentRenameId = null;
@@ -33,6 +37,21 @@ let statusRefreshTimer = null;
 let currentViewMode = 'list'; // 'list' or 'grid'
 let workspaces = [];
 const importPreviewState = createImportPreviewState();
+const diagnosticsViewState = createDiagnosticsViewState();
+let diagnosticsModalProfileId = null;
+
+const diagnosticMessages = {
+  'process-unknown': '无法确认该配置关联的浏览器进程。请重新检测后再进行目录操作。',
+  'browser-path-invalid': '浏览器可执行文件路径不可用，请前往设置重新选择。',
+  'profile-directory-missing': '配置目录不存在。仅在浏览器未运行时可以重新创建空目录。',
+  healthy: '当前配置正常。',
+};
+
+const diagnosticActionLabels = {
+  retry: '重新检测',
+  'open-settings': '前往设置',
+  'recreate-empty-directory': '重新创建空目录',
+};
 
 // Toast notification system
 function showToast(message, type = 'info') {
@@ -80,7 +99,7 @@ async function loadProfiles() {
   profileState.setProfiles(profiles);
   workspaces = Array.isArray(loadedWorkspaces) ? loadedWorkspaces : [];
   try {
-    await refreshAllStatuses();
+    await Promise.all([refreshAllStatuses(), refreshDiagnostics()]);
   } catch (error) {
     showToast(`加载进程状态失败：${error.message}`, 'warning');
   }
@@ -88,6 +107,36 @@ async function loadProfiles() {
 
   // Start polling browser status
   startStatusPolling();
+}
+
+function getCurrentProfileIds() {
+  return new Set(profileState.getSnapshot().profiles.map((profile) => profile.id));
+}
+
+async function requestDiagnostics(profileId) {
+  const request = diagnosticsViewState.begin(profileId);
+  let diagnostic;
+  try {
+    diagnostic = await window.browserAPI.inspectProfileDiagnostics(profileId);
+  } catch {
+    diagnostic = { code: 'DIAGNOSTICS_UNAVAILABLE', state: 'process-unknown', actions: ['retry'] };
+  }
+  diagnosticsViewState.accept(request, diagnostic, getCurrentProfileIds());
+  return diagnosticsViewState.get(profileId);
+}
+
+async function refreshDiagnostics(profileIds = null) {
+  const profiles = profileState.getSnapshot().profiles;
+  const requestedIds = Array.isArray(profileIds)
+    ? profileIds.filter((profileId) => profiles.some((profile) => profile.id === profileId))
+    : profiles.map((profile) => profile.id);
+  await mapWithConcurrency(requestedIds, 4, requestDiagnostics);
+}
+
+function getDiagnosticBadgeMarkup(profileId) {
+  const badge = getDiagnosticBadge(diagnosticsViewState.get(profileId));
+  if (!badge) return '';
+  return `<button type="button" class="${badge.className}" data-profile-action="open-diagnostics" data-profile-id="${escapeHtml(profileId)}">${badge.label}</button>`;
 }
 
 async function refreshStatuses(forceProfileId = null) {
@@ -229,6 +278,7 @@ function renderProfiles() {
           ${escapeHtml(profile.browserType)}
         </span>
         ${getWorkspaceLabel(profile)}
+        ${getDiagnosticBadgeMarkup(profile.id)}
       </div>
       <div class="profile-actions">
         <span class="profile-status-actions">${getStatusMarkup(profile, statusMembership)}</span>
@@ -462,6 +512,7 @@ document.getElementById('profilesList').addEventListener('click', (event) => {
     clone: cloneProfile,
     'refresh-status': refreshUnknownStatus,
     'forget-process': forgetProcess,
+    'open-diagnostics': openDiagnostics,
     'toggle-favorite': toggleProfileFavorite,
     rename: renameProfile,
     delete: deleteProfile
@@ -473,6 +524,95 @@ document.getElementById('profilesList').addEventListener('click', (event) => {
     });
   }
 });
+
+function closeDiagnosticsModal() {
+  document.getElementById('diagnosticsModal').classList.remove('show');
+  diagnosticsModalProfileId = null;
+}
+
+function renderDiagnosticsModal(profileId) {
+  const body = document.getElementById('diagnosticsModalBody');
+  const diagnostic = diagnosticsViewState.get(profileId);
+  const profile = profileState.getSnapshot().profiles.find((item) => item.id === profileId);
+  if (!diagnostic || !profile) {
+    closeDiagnosticsModal();
+    return;
+  }
+
+  body.replaceChildren();
+  const heading = document.createElement('p');
+  const badge = getDiagnosticBadge(diagnostic);
+  heading.className = 'diagnostic-summary';
+  heading.textContent = badge ? badge.label : '配置正常';
+  body.appendChild(heading);
+
+  const message = document.createElement('p');
+  message.className = 'diagnostic-message';
+  message.textContent = diagnosticMessages[diagnostic.state] || diagnosticMessages['process-unknown'];
+  body.appendChild(message);
+
+  if (diagnostic.actions.length > 0) {
+    const actions = document.createElement('div');
+    actions.className = 'diagnostic-actions';
+    diagnostic.actions.forEach((action) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = action === 'recreate-empty-directory' ? 'btn btn-warning' : 'btn btn-primary';
+      button.dataset.diagnosticAction = action;
+      button.textContent = diagnosticActionLabels[action];
+      actions.appendChild(button);
+    });
+    body.appendChild(actions);
+  }
+}
+
+async function openDiagnostics(profileId) {
+  if (!profileState.getSnapshot().profiles.some((profile) => profile.id === profileId)) return;
+  diagnosticsModalProfileId = profileId;
+  await requestDiagnostics(profileId);
+  if (diagnosticsModalProfileId !== profileId) return;
+  renderProfiles();
+  renderDiagnosticsModal(profileId);
+  document.getElementById('diagnosticsModal').classList.add('show');
+}
+
+async function performDiagnosticAction(action) {
+  const profileId = diagnosticsModalProfileId;
+  if (!profileId) return;
+  const diagnostic = diagnosticsViewState.get(profileId);
+  if (!diagnostic?.actions.includes(action)) return;
+
+  if (action === 'open-settings') {
+    window.location.href = 'settings.html';
+    return;
+  }
+  if (action === 'recreate-empty-directory') {
+    const result = await window.browserAPI.repairProfileDirectory(profileId);
+    if (!result?.success) {
+      showToast('重新创建目录失败，请重新检测后再试', 'error');
+    } else {
+      showToast('已重新创建空配置目录', 'success');
+    }
+  }
+  await requestDiagnostics(profileId);
+  if (diagnosticsModalProfileId !== profileId) return;
+  renderProfiles();
+  renderDiagnosticsModal(profileId);
+}
+
+document.getElementById('diagnosticsModal').addEventListener('click', (event) => {
+  if (event.target.id === 'diagnosticsModal') {
+    closeDiagnosticsModal();
+    return;
+  }
+  const button = event.target.closest('[data-diagnostic-action]');
+  if (!button) return;
+  button.disabled = true;
+  void performDiagnosticAction(button.dataset.diagnosticAction)
+    .catch(() => showToast('诊断操作失败，请重新检测后再试', 'error'))
+    .finally(() => { button.disabled = false; });
+});
+document.getElementById('closeDiagnostics').addEventListener('click', closeDiagnosticsModal);
 
 document.getElementById('profilesList').addEventListener('change', (event) => {
   if (event.target.matches('.profile-checkbox')) {
@@ -536,6 +676,7 @@ document.getElementById('addProfileForm').addEventListener('submit', async (e) =
       const { profiles } = profileState.getSnapshot();
       profileState.setProfiles([...profiles, result.profile]);
       profileState.clearSelection(); // Clear selection when adding new profile
+      await refreshDiagnostics([result.profile.id]);
       renderProfiles();
       document.getElementById('profileName').value = '';
       document.getElementById('addModal').classList.remove('show');
@@ -585,6 +726,8 @@ async function deleteProfile(profileId) {
   const result = await window.browserAPI.deleteProfile(profileId, trashData);
 
   if (result.success) {
+    diagnosticsViewState.remove(profileId);
+    if (diagnosticsModalProfileId === profileId) closeDiagnosticsModal();
     profileState.setProfiles(
       profileState.getSnapshot().profiles.filter(p => p.id !== profileId),
     );
@@ -658,6 +801,7 @@ async function cloneProfile(profileId) {
     }
     const { profiles } = profileState.getSnapshot();
     profileState.setProfiles([...profiles, result.profile]);
+    await refreshDiagnostics([result.profile.id]);
     renderProfiles();
     showToast(`已创建 "${result.profile.name}"`, 'success');
   } finally {
@@ -766,6 +910,7 @@ document.getElementById('confirmRename').addEventListener('click', async () => {
       name: result.profile.name,
       path: result.profile.path,
     });
+    await refreshDiagnostics([currentRenameId]);
     renderProfiles();
     closeModal();
     showToast(`已重命名为 "${newName}"`, 'success');
@@ -1452,6 +1597,7 @@ function showImportPreview(preview) {
       }
       try {
         profileState.setProfiles(await window.browserAPI.getProfiles());
+        await refreshDiagnostics();
         renderProfiles();
       } catch {
         showToast('导入完成，但刷新配置列表失败', 'warning');

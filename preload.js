@@ -53,4 +53,10 @@ contextBridge.exposeInMainWorld('browserAPI', {
   setProfileFavorite: (profileId, favorite) => (
     ipcRenderer.invoke('set-profile-favorite', { profileId, favorite })
   ),
+  inspectProfileDiagnostics: (profileId) => (
+    ipcRenderer.invoke('inspect-profile-diagnostics', profileId)
+  ),
+  repairProfileDirectory: (profileId) => (
+    ipcRenderer.invoke('repair-profile-directory', profileId)
+  ),
 });
