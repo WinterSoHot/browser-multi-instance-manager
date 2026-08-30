@@ -1,4 +1,13 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  shell,
+  Tray,
+  Menu,
+  nativeImage,
+} = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { randomUUID } = require("crypto");
@@ -27,6 +36,8 @@ const {
   inspectBrowserProcesses,
 } = require("./lib/process-inspector");
 const { createWindowAfterInitialization } = require("./lib/window-lifecycle");
+const { createAppLifecycle } = require("./lib/app-lifecycle");
+const { createTrayManager } = require("./lib/tray-manager");
 const {
   filterRestorableProcessRecords,
   resolveProfilePath,
@@ -47,6 +58,7 @@ const profileOperations = createProfileOperationCoordinator();
 const enqueueSettingsMutation = createAsyncQueue();
 
 let mainWindow;
+let trayManager;
 const browserProcessManager = new BrowserProcessManager({
   verifyProcess: inspectBrowserProcess,
   verifyProcesses: inspectBrowserProcesses,
@@ -56,6 +68,7 @@ const browserProcessManager = new BrowserProcessManager({
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("browser-statuses-changed");
     }
+    trayManager?.scheduleRefresh();
   },
 });
 
@@ -174,6 +187,10 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
+  mainWindow.on("close", (event) => {
+    void appLifecycle.handleWindowClose(event);
+  });
+  return mainWindow;
 }
 
 const unregisterIpcHandlers = registerIpcHandlers({
@@ -204,14 +221,89 @@ function ensureMainWindow() {
   });
 }
 
-void ensureMainWindow();
+async function showMainWindow() {
+  await ensureMainWindow();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createTrayIcon() {
+  const icon = nativeImage.createFromPath(path.join(__dirname, "build", "icons", "icon.png"));
+  if (process.platform !== "darwin" || icon.isEmpty()) return icon;
+  const trayIcon = icon.resize({ width: 16, height: 16 });
+  trayIcon.setTemplateImage(true);
+  return trayIcon;
+}
+
+async function getActiveStatusCount() {
+  const profileIds = appStore.getProfiles().map((profile) => profile.id);
+  const statuses = await browserProcessManager.getStatuses(profileIds, { force: true });
+  if (!statuses || typeof statuses !== "object") {
+    throw new Error("Unable to inspect browser statuses");
+  }
+  return profileIds.reduce((counts, profileId) => {
+    const status = statuses[profileId];
+    if (!status || typeof status.running !== "boolean" || status.verificationUnavailable === true) {
+      counts.unknown += 1;
+    } else if (status.running) {
+      counts.running += 1;
+    }
+    return counts;
+  }, { running: 0, unknown: 0 });
+}
+
+const appLifecycle = createAppLifecycle({
+  platform: process.platform,
+  getCloseToTray: () => appStore.getAppSettings().closeToTray !== false,
+  getActiveStatusCount,
+  confirmExit: async ({ running, unknown }) => {
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      buttons: ["取消", "退出管理器"],
+      defaultId: 0,
+      cancelId: 0,
+      message: `有 ${running} 个正在运行的浏览器，${unknown} 个状态未知。`,
+      detail: "只退出管理器，不关闭浏览器。",
+    });
+    return result.response === 1;
+  },
+  hideWindow: () => mainWindow?.hide(),
+  destroyTray: () => trayManager?.destroy(),
+  quitApp: () => app.quit(),
+});
+
+trayManager = createTrayManager({
+  Tray,
+  Menu,
+  createTrayIcon,
+  showWindow: showMainWindow,
+  requestQuit: appLifecycle.requestQuit,
+  listProfiles: () => appStore.getProfiles(),
+  listFavoriteProfiles: () => appStore.getProfiles().filter((profile) => profile.favorite),
+  listWorkspaces: () => appStore.getWorkspaces(),
+  getStatuses: (profileIds, options) => browserProcessManager.getStatuses(profileIds, options),
+  launchProfiles: (profileId) => profileService.launch(profileId),
+});
+
+if (typeof store.onDidAnyChange === "function") {
+  store.onDidAnyChange(() => trayManager?.scheduleRefresh());
+}
+
+void initializationPromise.then(() => trayManager.create()).catch(() => {});
+void showMainWindow();
 
 app.on("activate", () => {
-  void ensureMainWindow();
+  void showMainWindow();
+});
+
+app.on("before-quit", (event) => {
+  void appLifecycle.handleBeforeQuit(event);
 });
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    app.quit();
+    void appLifecycle.requestQuit();
   }
 });
