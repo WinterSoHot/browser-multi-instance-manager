@@ -273,6 +273,21 @@ test('workspace IPC returns a safe result when an asynchronous service operation
 
   assert.deepEqual(
     await handlers.get('create-workspace')({}, { name: 'Work' }),
-    { success: false, error: 'Workspace persistence failed' },
+    { success: false, error: 'Workspace request failed' },
   );
+});
+
+test('workspace IPC sanitizes null, undefined, and non-Error promise rejections', async () => {
+  for (const rejection of [null, undefined, 'raw system failure', { message: '/private/path' }]) {
+    const { handlers } = createHandlerFixture({
+      workspaceService: {
+        create: () => Promise.reject(rejection),
+      },
+    });
+
+    assert.deepEqual(
+      await handlers.get('create-workspace')({}, { name: 'Work' }),
+      { success: false, error: 'Workspace request failed' },
+    );
+  }
 });

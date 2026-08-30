@@ -71,6 +71,21 @@ test('creates and lists uniquely named workspaces without filesystem-name restri
     { success: false, error: 'Workspace name already exists' },
   );
   assert.deepEqual(
+    await fixture.service.create({ name: 'Café' }),
+    {
+      success: true,
+      workspace: {
+        id: 'workspace-2',
+        name: 'Café',
+        createdAt: '2026-08-30T00:00:00.000Z',
+      },
+    },
+  );
+  assert.deepEqual(
+    await fixture.service.create({ name: 'Cafe\u0301' }),
+    { success: false, error: 'Workspace name already exists' },
+  );
+  assert.deepEqual(
     await fixture.service.create({ name: ' '.repeat(81) }),
     { success: false, error: 'Invalid workspace name' },
   );
