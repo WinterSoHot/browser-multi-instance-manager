@@ -4,6 +4,7 @@ const {
   createNonOverlappingTask,
   createSingleFlightTask,
   chunkItems,
+  createStatusMembership,
   escapeHtml,
   filterCloseableProfileIds,
   formatBatchErrors,
@@ -132,17 +133,17 @@ function getVisibleProfiles() {
   return profileState.getVisibleProfiles();
 }
 
-function getStatusMarkup(profile, statusSnapshot = profileState.getSnapshot()) {
-  const { runningIds, unknownIds, retryableCloseIds } = statusSnapshot;
-  const isUnknown = unknownIds.includes(profile.id);
-  const isRunning = runningIds.includes(profile.id);
+function getStatusMarkup(profile, statusMembership) {
+  const { runningIds, unknownIds, retryableCloseIds } = statusMembership;
+  const isUnknown = unknownIds.has(profile.id);
+  const isRunning = runningIds.has(profile.id);
   const isBusy = busyProfiles.has(profile.id);
   const btnClass = isRunning ? 'btn-danger' : 'btn-success';
   const btnText = isBusy ? '处理中…' : (isRunning ? '关闭' : '启动');
   const launchFunc = isRunning ? 'closeBrowserOnly' : 'launchBrowserOnly';
   if (isUnknown) {
     const primaryAction = getUnknownStatusPrimaryAction(
-      retryableCloseIds.includes(profile.id),
+      retryableCloseIds.has(profile.id),
     );
     return `
       <span class="status-unknown" title="无法确认上次记录的浏览器进程">状态未知</span>
@@ -158,6 +159,7 @@ function renderProfiles() {
   const snapshot = profileState.getSnapshot();
   const { filter, query, selectedIds } = snapshot;
   const selectedProfiles = new Set(selectedIds);
+  const statusMembership = createStatusMembership(snapshot);
 
   // Filter profiles based on current filter and search query
   const filteredProfiles = getVisibleProfiles();
@@ -188,7 +190,7 @@ function renderProfiles() {
         </span>
       </div>
       <div class="profile-actions">
-        <span class="profile-status-actions">${getStatusMarkup(profile, snapshot)}</span>
+        <span class="profile-status-actions">${getStatusMarkup(profile, statusMembership)}</span>
         <button class="btn btn-secondary btn-small" data-profile-action="open-folder" data-profile-id="${escapeHtml(profile.id)}">文件夹</button>
         <button class="btn btn-secondary btn-small" data-profile-action="profile-size" data-profile-id="${escapeHtml(profile.id)}">大小</button>
         <button class="btn btn-secondary btn-small" data-profile-action="clone" data-profile-id="${escapeHtml(profile.id)}">新建空白副本</button>
@@ -245,11 +247,12 @@ function updateVisibleStatusCards() {
   const snapshot = profileState.getSnapshot();
   const { profiles } = snapshot;
   const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
+  const statusMembership = createStatusMembership(snapshot);
   document.querySelectorAll('.profile-card').forEach((card) => {
     const profile = profilesById.get(card.dataset.id);
     const statusContainer = card.querySelector('.profile-status-actions');
     if (profile && statusContainer) {
-      statusContainer.innerHTML = getStatusMarkup(profile, snapshot);
+      statusContainer.innerHTML = getStatusMarkup(profile, statusMembership);
     }
   });
   updateLaunchSelectedButton();

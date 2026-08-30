@@ -10,6 +10,7 @@ const {
 const { BrowserProcessManager } = require("./lib/browser-process-manager");
 const { createAsyncQueue } = require("./lib/async-queue");
 const { createAppStore } = require("./lib/app-store");
+const { createBrowserSettingsService } = require("./lib/browser-settings-service");
 const { createProfileService } = require("./lib/profile-service");
 const {
   createProfileOperationCoordinator,
@@ -54,42 +55,6 @@ const browserProcessManager = new BrowserProcessManager({
   },
 });
 
-// Get current platform
-function getPlatform() {
-  return process.platform;
-}
-
-// Get default browser paths based on platform
-function getDefaultBrowserPaths() {
-  return Object.fromEntries(
-    ["chrome", "firefox", "edge", "zen"].map((browserType) => [
-      browserType,
-      resolveInstalledBrowserPath(browserType),
-    ]),
-  );
-}
-
-// Get browser executable path based on platform and browser type
-function getBrowserExecutable(browserType) {
-  const customSettings = store.get("browserSettings", {});
-  const customPath = customSettings[browserType];
-
-  // If custom path is set, use it
-  if (customPath) {
-    try {
-      const validatedPath = validateBrowserSettings({ [browserType]: customPath })[browserType];
-      return normalizeBrowserExecutablePath(browserType, validatedPath);
-    } catch {
-      return null;
-    }
-  }
-
-  const detectedPath = resolveInstalledBrowserPath(browserType);
-  return detectedPath
-    ? normalizeBrowserExecutablePath(browserType, detectedPath)
-    : null;
-}
-
 function getProfilesDir() {
   return path.join(app.getPath("userData"), "profiles");
 }
@@ -122,11 +87,22 @@ async function getDirectorySize(directoryPath) {
   return total;
 }
 
+const settingsService = createBrowserSettingsService({
+  appStore,
+  enqueueMutation: enqueueSettingsMutation,
+  normalizeExecutablePath: normalizeBrowserExecutablePath,
+  resolveInstalledPath: resolveInstalledBrowserPath,
+  validateSettings: validateBrowserSettings,
+  pathExists,
+  getPlatform: () => process.platform,
+  showOpenDialog: (options) => dialog.showOpenDialog(mainWindow, options),
+});
+
 const profileService = createProfileService({
   appStore,
   profileOperations,
   browserProcessManager,
-  getBrowserExecutable,
+  getBrowserExecutable: settingsService.getExecutable,
   getProfilesDir,
   createProfileDir,
   pathExists,
@@ -139,64 +115,6 @@ const profileService = createProfileService({
   readImportFile: readTextFileBounded,
   writeExportFile: (filePath, content) => fsp.writeFile(filePath, content, "utf8"),
 });
-
-const settingsService = {
-  get() {
-    return store.get("browserSettings", {});
-  },
-  set(settings) {
-    return enqueueSettingsMutation(async () => {
-      try {
-        const validatedSettings = validateBrowserSettings(settings);
-        for (const [browserType, configuredPath] of Object.entries(validatedSettings)) {
-          if (!configuredPath) continue;
-          const executablePath = normalizeBrowserExecutablePath(browserType, configuredPath);
-          if (!(await pathExists(executablePath))) {
-            throw new Error(`${browserType} executable does not exist`);
-          }
-        }
-        store.set("browserSettings", validatedSettings);
-        return { success: true };
-      } catch (error) {
-        return { success: false, error: error.message };
-      }
-    });
-  },
-  getDefaultPath(browserType) {
-    const defaultPaths = getDefaultBrowserPaths();
-    return defaultPaths[browserType] || "";
-  },
-  getPlatform,
-  async getEnvironment() {
-    const settings = store.get("browserSettings", {});
-    const defaultPaths = getDefaultBrowserPaths();
-    const validity = {};
-    for (const browserType of ["chrome", "firefox", "edge", "zen"]) {
-      const selectedPath = settings[browserType] || defaultPaths[browserType];
-      validity[browserType] = Boolean(
-        selectedPath
-        && await pathExists(normalizeBrowserExecutablePath(browserType, selectedPath)),
-      );
-    }
-    return { platform: getPlatform(), settings, defaultPaths, validity };
-  },
-  async browseFolder(defaultPath) {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      properties: ["openFile"],
-      defaultPath: defaultPath || undefined,
-      filters: [
-        { name: "Executables", extensions: ["exe", "app", ""] },
-        { name: "All Files", extensions: ["*"] },
-      ],
-    });
-
-    if (result.canceled || result.filePaths.length === 0) {
-      return { success: false, path: null };
-    }
-
-    return { success: true, path: result.filePaths[0] };
-  },
-};
 
 function createWindow() {
   mainWindow = new BrowserWindow({

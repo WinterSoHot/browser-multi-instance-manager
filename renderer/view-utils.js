@@ -160,6 +160,14 @@
     return { runningIds, unknownIds, retryableCloseIds };
   }
 
+  function createStatusMembership(snapshot = {}) {
+    return {
+      runningIds: new Set(snapshot.runningIds || []),
+      unknownIds: new Set(snapshot.unknownIds || []),
+      retryableCloseIds: new Set(snapshot.retryableCloseIds || []),
+    };
+  }
+
   function getUnknownStatusPrimaryAction(closeRetryAvailable) {
     return closeRetryAvailable
       ? { action: 'closeBrowserOnly', label: '重试关闭', className: 'btn-danger' }
@@ -191,6 +199,7 @@
     isEditableTarget,
     mapWithConcurrency,
     normalizeStatusSnapshot,
+    createStatusMembership,
     getUnknownStatusPrimaryAction,
     filterCloseableProfileIds,
     formatBatchErrors,

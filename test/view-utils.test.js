@@ -191,6 +191,24 @@ test('normalizes bulk statuses without treating unknown recovered processes as r
   );
 });
 
+test('builds isolated set membership for one renderer status pass', () => {
+  const snapshot = {
+    runningIds: ['running'],
+    unknownIds: ['unknown'],
+    retryableCloseIds: ['unknown'],
+  };
+
+  const membership = viewUtils.createStatusMembership(snapshot);
+
+  assert.equal(membership.runningIds.has('running'), true);
+  assert.equal(membership.runningIds.has('unknown'), false);
+  assert.equal(membership.unknownIds.has('unknown'), true);
+  assert.equal(membership.retryableCloseIds.has('unknown'), true);
+
+  snapshot.runningIds.push('added-after-pass');
+  assert.equal(membership.runningIds.has('added-after-pass'), false);
+});
+
 test('maps retryable unknown status to the safe close action', () => {
   assert.deepEqual(
     viewUtils.getUnknownStatusPrimaryAction?.(true),
