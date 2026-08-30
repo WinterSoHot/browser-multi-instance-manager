@@ -73,7 +73,18 @@ function loadMainWithFakes() {
             size: () => {},
             exportMetadata: () => {},
             importMetadata: () => {},
+            previewImportMetadata: () => {},
+            executeImport: () => {},
           };
+        },
+      };
+    }
+    if (request === './lib/import-export-service') {
+      return {
+        createImportExportService(options) {
+          serviceOptions.importExport = options;
+          serviceOptions.importService = { previewImport: () => {}, executeImport: () => {} };
+          return serviceOptions.importService;
         },
       };
     }
@@ -114,4 +125,13 @@ test('main injects one shared profile-operation coordinator into profile and wor
   const { serviceOptions } = loadMainWithFakes();
 
   assert.equal(serviceOptions.workspace.profileOperations, serviceOptions.profile.profileOperations);
+});
+
+test('main constructs the import service with safe directory primitives and gives it to profile service', () => {
+  const { serviceOptions } = loadMainWithFakes();
+
+  assert.equal(serviceOptions.importExport.profileOperations, serviceOptions.profile.profileOperations);
+  assert.equal(typeof serviceOptions.importExport.getProfilePath, 'function');
+  assert.equal(typeof serviceOptions.importExport.removeEmptyDirectory, 'function');
+  assert.equal(serviceOptions.profile.importExportService, serviceOptions.importService);
 });

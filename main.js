@@ -13,6 +13,7 @@ const { createAsyncQueue } = require("./lib/async-queue");
 const { createAppStore } = require("./lib/app-store");
 const { createBrowserSettingsService } = require("./lib/browser-settings-service");
 const { createProfileService } = require("./lib/profile-service");
+const { createImportExportService } = require("./lib/import-export-service");
 const { createWorkspaceService } = require("./lib/workspace-service");
 const {
   createProfileOperationCoordinator,
@@ -61,12 +62,19 @@ function getProfilesDir() {
   return path.join(app.getPath("userData"), "profiles");
 }
 
+function getProfilePath(browserType, profileName) {
+  return resolveProfilePath(getProfilesDir(), browserType, profileName);
+}
+
 // Create profile directory
 async function createProfileDir(browserType, profileName) {
-  const profilesDir = getProfilesDir();
-  const profileDir = resolveProfilePath(profilesDir, browserType, profileName);
+  const profileDir = resolveProfilePath(getProfilesDir(), browserType, profileName);
   await fsp.mkdir(profileDir, { recursive: true });
   return profileDir;
+}
+
+async function removeEmptyDirectory(directoryPath) {
+  await fsp.rmdir(directoryPath);
 }
 
 async function pathExists(targetPath) {
@@ -100,6 +108,16 @@ const settingsService = createBrowserSettingsService({
   showOpenDialog: (options) => dialog.showOpenDialog(mainWindow, options),
 });
 
+const importExportService = createImportExportService({
+  appStore,
+  profileOperations,
+  getProfilePath,
+  createProfileDir,
+  pathExists,
+  removeEmptyDirectory,
+  now: () => Date.now(),
+});
+
 const profileService = createProfileService({
   appStore,
   profileOperations,
@@ -116,6 +134,7 @@ const profileService = createProfileService({
   showOpenDialog: (options) => dialog.showOpenDialog(mainWindow, options),
   readImportFile: readTextFileBounded,
   writeExportFile: (filePath, content) => fsp.writeFile(filePath, content, "utf8"),
+  importExportService,
 });
 
 const workspaceService = createWorkspaceService({

@@ -69,3 +69,18 @@ test('preload forwards optional forced browser-status snapshots while retaining 
     { channel: 'get-browser-statuses', args: [['profile-2'], { force: true }] },
   ]);
 });
+
+test('preload exposes only the two-phase import calls', async () => {
+  const { browserApi, invocations } = loadBrowserApi();
+
+  await browserApi.previewImport();
+  await browserApi.executeImport('a'.repeat(64), [{ line: 2, action: 'skip' }]);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(invocations)), [
+    { channel: 'preview-import', args: [] },
+    {
+      channel: 'execute-import',
+      args: [{ token: 'a'.repeat(64), decisions: [{ line: 2, action: 'skip' }] }],
+    },
+  ]);
+});

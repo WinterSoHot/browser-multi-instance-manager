@@ -17,6 +17,7 @@ const {
 } = window.viewUtils;
 const { createProfileState } = window.profileState;
 const { executeWorkspaceBatch, createWorkspaceBatchRunner } = window.workspaceBatch;
+const { buildImportDecisions, renderImportPreview } = window.ImportPreview;
 
 const profileState = createProfileState();
 let currentRenameId = null;
@@ -26,6 +27,8 @@ let statusCheckInterval = null;
 let statusRefreshTimer = null;
 let currentViewMode = 'list'; // 'list' or 'grid'
 let workspaces = [];
+let activeImportPreview = null;
+let importPreviewBusy = false;
 
 // Toast notification system
 function showToast(message, type = 'info') {
@@ -1405,18 +1408,61 @@ document.getElementById('exportProfilesBtn')?.addEventListener('click', async ()
   }
 });
 
+function closeImportPreview() {
+  activeImportPreview = null;
+  importPreviewBusy = false;
+  document.getElementById('importPreviewModal').classList.remove('active');
+}
+
+function getImportConflictMode() {
+  return document.querySelector('input[name="importConflictMode"]:checked')?.value || 'skip';
+}
+
+function showImportPreview(preview) {
+  activeImportPreview = preview;
+  const body = document.getElementById('importPreviewBody');
+  body.innerHTML = renderImportPreview(preview);
+  document.getElementById('importPreviewModal').classList.add('active');
+  const confirmButton = document.getElementById('confirmImportPreview');
+  confirmButton?.addEventListener('click', async () => {
+    if (importPreviewBusy || !activeImportPreview || activeImportPreview.invalid.length > 0) return;
+    importPreviewBusy = true;
+    confirmButton.disabled = true;
+    try {
+      const result = await window.browserAPI.executeImport(
+        activeImportPreview.token,
+        buildImportDecisions(activeImportPreview, getImportConflictMode()),
+      );
+      if (!result?.success) {
+        showToast(`导入失败：${result?.code || '请求失败'}`, 'error');
+        return;
+      }
+      profileState.setProfiles(await window.browserAPI.getProfiles());
+      renderProfiles();
+      closeImportPreview();
+      showToast(`已导入 ${result.profiles.length} 个配置`, 'success');
+    } catch {
+      showToast('导入失败：请求失败', 'error');
+    } finally {
+      importPreviewBusy = false;
+      if (document.getElementById('importPreviewModal').classList.contains('active')) {
+        confirmButton.disabled = Boolean(activeImportPreview?.invalid?.length);
+      }
+    }
+  });
+}
+
+document.getElementById('cancelImportPreview')?.addEventListener('click', closeImportPreview);
+
 document.getElementById('importProfilesBtn')?.addEventListener('click', async () => {
   try {
-    const result = await window.browserAPI.importProfiles();
-    if (!result.success) {
-      if (!result.canceled) showToast(`导入失败：${result.error}`, 'error');
+    const preview = await window.browserAPI.previewImport();
+    if (preview?.success === false) {
+      if (preview.code !== 'IMPORT_CANCELED') showToast(`导入失败：${preview.code || '请求失败'}`, 'error');
       return;
     }
-    const { profiles } = profileState.getSnapshot();
-    profileState.setProfiles([...profiles, ...result.profiles]);
-    renderProfiles();
-    showToast(`已导入 ${result.profiles.length} 个配置，跳过 ${result.skipped} 个重复项`, 'success');
-  } catch (error) {
-    showToast(`导入失败：${error.message}`, 'error');
+    showImportPreview(preview);
+  } catch {
+    showToast('导入失败：请求失败', 'error');
   }
 });

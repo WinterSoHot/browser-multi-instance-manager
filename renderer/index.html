@@ -190,12 +190,28 @@
     </div>
   </div>
 
+  <div id="importPreviewModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="importPreviewTitle">
+    <div class="modal-content">
+      <h3 id="importPreviewTitle">导入预览</h3>
+      <div id="importPreviewBody" aria-live="polite"></div>
+      <fieldset id="importConflictChoices" class="form-group">
+        <legend>重复项处理</legend>
+        <label><input type="radio" name="importConflictMode" value="skip" checked> 跳过重复项</label>
+        <label><input type="radio" name="importConflictMode" value="rename"> 自动重命名</label>
+      </fieldset>
+      <div class="modal-actions">
+        <button id="cancelImportPreview" type="button" class="btn btn-secondary">取消</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
   <script src="view-utils.js"></script>
   <script src="profile-state.js"></script>
   <script src="workspace-batch.js"></script>
+  <script src="import-preview.js"></script>
   <script src="index.js"></script>
 </body>
 </html>

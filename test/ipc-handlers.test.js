@@ -19,6 +19,8 @@ const expectedChannels = [
   'get-profile-size',
   'export-profiles',
   'import-profiles',
+  'preview-import',
+  'execute-import',
   'get-browser-settings',
   'set-browser-settings',
   'get-default-browser-path',
@@ -62,6 +64,8 @@ function createHandlerFixture({
       size: () => {},
       exportMetadata: () => {},
       importMetadata: () => {},
+      previewImportMetadata: () => {},
+      executeImport: () => {},
       ...profileOverrides,
     },
     browserProcessManager: {
@@ -299,4 +303,51 @@ test('workspace IPC sanitizes null, undefined, and non-Error promise rejections'
       { success: false, error: 'Workspace request failed' },
     );
   }
+});
+
+test('import IPC accepts only an opaque token and duplicate-row skip or rename decisions', async () => {
+  const calls = [];
+  const { handlers } = createHandlerFixture({
+    profileService: {
+      previewImportMetadata: () => ({ code: 'OK', token: 'a'.repeat(64) }),
+      executeImport(payload) {
+        calls.push(payload);
+        return { success: true, code: 'OK' };
+      },
+    },
+  });
+
+  assert.deepEqual(await handlers.get('preview-import')({}, undefined), {
+    code: 'OK', token: 'a'.repeat(64),
+  });
+  assert.deepEqual(await handlers.get('execute-import')({}, {
+    token: 'a'.repeat(64),
+    decisions: [{ line: 2, action: 'rename' }],
+  }), { success: true, code: 'OK' });
+  assert.deepEqual(calls, [{
+    token: 'a'.repeat(64),
+    decisions: [{ line: 2, action: 'rename' }],
+  }]);
+  assert.deepEqual(await handlers.get('execute-import')({}, {
+    token: 'a'.repeat(64),
+    decisions: [{ line: 2, action: 'rename', path: '/private' }],
+  }), { success: false, code: 'IMPORT_REQUEST_INVALID' });
+});
+
+test('import IPC never forwards a service exception or raw system detail', async () => {
+  const { handlers } = createHandlerFixture({
+    profileService: {
+      previewImportMetadata: async () => { throw new Error('/private/imports/profiles.json'); },
+      executeImport: async () => { throw new Error('native failure'); },
+    },
+  });
+
+  assert.deepEqual(await handlers.get('preview-import')({}, undefined), {
+    success: false,
+    code: 'IMPORT_PREVIEW_FAILED',
+  });
+  assert.deepEqual(await handlers.get('execute-import')({}, {
+    token: 'a'.repeat(64),
+    decisions: [],
+  }), { success: false, code: 'IMPORT_REQUEST_INVALID' });
 });

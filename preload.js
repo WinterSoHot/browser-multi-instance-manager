@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('browserAPI', {
   getProfileSize: (profileId) => ipcRenderer.invoke('get-profile-size', profileId),
   exportProfiles: () => ipcRenderer.invoke('export-profiles'),
   importProfiles: () => ipcRenderer.invoke('import-profiles'),
+  previewImport: () => ipcRenderer.invoke('preview-import'),
+  executeImport: (token, decisions) => (
+    ipcRenderer.invoke('execute-import', { token, decisions })
+  ),
   launchBrowser: (profileId) => ipcRenderer.invoke('launch-browser', profileId),
   closeBrowser: (profileId) => ipcRenderer.invoke('close-browser', profileId),
   getBrowserStatus: (profileId) => ipcRenderer.invoke('get-browser-status', profileId),

@@ -392,3 +392,58 @@ test('export and import keep only profile metadata and skip duplicate names', as
     { browserType: 'firefox', name: 'Personal' },
   ]);
 });
+
+test('previewImportMetadata owns the file dialog and bounded reader without exposing the selected path', async () => {
+  const calls = [];
+  const service = createProfileService({
+    showOpenDialog: async () => ({ canceled: false, filePaths: ['/private/imports/profiles.json'] }),
+    readImportFile: async (filePath) => {
+      calls.push({ method: 'read', filePath });
+      return JSON.stringify({ version: 1, profiles: [{ browserType: 'chrome', name: 'Work' }] });
+    },
+    importExportService: {
+      previewImport(document) {
+        calls.push({ method: 'preview', document });
+        return { code: 'OK', token: 'a'.repeat(64), valid: [], duplicates: [], invalid: [] };
+      },
+    },
+  });
+
+  assert.deepEqual(await service.previewImportMetadata(), {
+    code: 'OK', token: 'a'.repeat(64), valid: [], duplicates: [], invalid: [],
+  });
+  assert.deepEqual(calls, [
+    { method: 'read', filePath: '/private/imports/profiles.json' },
+    {
+      method: 'preview',
+      document: { version: 1, profiles: [{ browserType: 'chrome', name: 'Work' }] },
+    },
+  ]);
+});
+
+test('previewImportMetadata returns a stable code for malformed documents and read failures', async () => {
+  for (const readImportFile of [async () => '{', async () => { throw new Error('/private/failure'); }]) {
+    const service = createProfileService({
+      showOpenDialog: async () => ({ canceled: false, filePaths: ['/private/imports/profiles.json'] }),
+      readImportFile,
+      importExportService: { previewImport: () => assert.fail('invalid JSON must not reach preview') },
+    });
+    assert.deepEqual(await service.previewImportMetadata(), {
+      success: false,
+      code: 'INVALID_IMPORT_DOCUMENT',
+    });
+  }
+});
+
+test('previewImportMetadata also sanitizes a failed file dialog', async () => {
+  const service = createProfileService({
+    showOpenDialog: async () => { throw new Error('/private/dialog-failure'); },
+    readImportFile: async () => assert.fail('reader must not run after dialog failure'),
+    importExportService: { previewImport: () => assert.fail('preview must not run after dialog failure') },
+  });
+
+  assert.deepEqual(await service.previewImportMetadata(), {
+    success: false,
+    code: 'INVALID_IMPORT_DOCUMENT',
+  });
+});
