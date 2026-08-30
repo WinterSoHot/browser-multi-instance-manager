@@ -6,28 +6,21 @@ const {
   chunkItems,
   escapeHtml,
   filterCloseableProfileIds,
-  filterProfiles,
   formatBatchErrors,
   getUnknownStatusPrimaryAction,
   mapWithConcurrency,
   normalizeStatusSnapshot,
-  retainVisibleSelection,
   isEditableTarget,
   summarizeResults,
 } = window.viewUtils;
+const { createProfileState } = window.profileState;
 
-let profiles = [];
+const profileState = createProfileState();
 let currentRenameId = null;
-let runningBrowsers = new Set();
-let unknownBrowsers = new Set();
-let retryableCloseBrowsers = new Set();
 let busyProfiles = new Set();
 let statusCheckInterval = null;
 let statusRefreshTimer = null;
-let selectedProfiles = new Set();
 let currentViewMode = 'list'; // 'list' or 'grid'
-let currentFilter = 'all'; // 'all', 'chrome', 'firefox', 'edge', 'zen'
-let searchQuery = ''; // Search query
 
 // Toast notification system
 function showToast(message, type = 'info') {
@@ -68,7 +61,7 @@ function showToast(message, type = 'info') {
 
 // Load profiles on startup
 async function loadProfiles() {
-  profiles = await window.browserAPI.getProfiles();
+  profileState.setProfiles(await window.browserAPI.getProfiles());
   try {
     await refreshAllStatuses();
   } catch (error) {
@@ -85,6 +78,7 @@ async function refreshStatuses(forceProfileId = null) {
   if (forceProfileId) {
     snapshot = { [forceProfileId]: await window.browserAPI.refreshBrowserStatus(forceProfileId) };
   } else {
+    const { profiles } = profileState.getSnapshot();
     const profileIdChunks = chunkItems(profiles.map((profile) => profile.id), 500);
     const snapshots = await mapWithConcurrency(
       profileIdChunks,
@@ -95,18 +89,21 @@ async function refreshStatuses(forceProfileId = null) {
   }
   const normalized = normalizeStatusSnapshot(snapshot);
   if (forceProfileId) {
-    runningBrowsers.delete(forceProfileId);
-    unknownBrowsers.delete(forceProfileId);
-    retryableCloseBrowsers.delete(forceProfileId);
-    if (normalized.runningIds.includes(forceProfileId)) runningBrowsers.add(forceProfileId);
-    if (normalized.unknownIds.includes(forceProfileId)) unknownBrowsers.add(forceProfileId);
+    const current = profileState.getSnapshot();
+    const runningIds = new Set(current.runningIds);
+    const unknownIds = new Set(current.unknownIds);
+    const retryableCloseIds = new Set(current.retryableCloseIds);
+    runningIds.delete(forceProfileId);
+    unknownIds.delete(forceProfileId);
+    retryableCloseIds.delete(forceProfileId);
+    if (normalized.runningIds.includes(forceProfileId)) runningIds.add(forceProfileId);
+    if (normalized.unknownIds.includes(forceProfileId)) unknownIds.add(forceProfileId);
     if (normalized.retryableCloseIds.includes(forceProfileId)) {
-      retryableCloseBrowsers.add(forceProfileId);
+      retryableCloseIds.add(forceProfileId);
     }
+    profileState.setStatuses({ runningIds, unknownIds, retryableCloseIds });
   } else {
-    runningBrowsers = new Set(normalized.runningIds);
-    unknownBrowsers = new Set(normalized.unknownIds);
-    retryableCloseBrowsers = new Set(normalized.retryableCloseIds);
+    profileState.setStatuses(normalized);
   }
   updateVisibleStatusCards();
 }
@@ -132,19 +129,20 @@ function startStatusPolling() {
 }
 
 function getVisibleProfiles() {
-  return filterProfiles(profiles, currentFilter, searchQuery);
+  return profileState.getVisibleProfiles();
 }
 
-function getStatusMarkup(profile) {
-  const isUnknown = unknownBrowsers.has(profile.id);
-  const isRunning = runningBrowsers.has(profile.id);
+function getStatusMarkup(profile, statusSnapshot = profileState.getSnapshot()) {
+  const { runningIds, unknownIds, retryableCloseIds } = statusSnapshot;
+  const isUnknown = unknownIds.includes(profile.id);
+  const isRunning = runningIds.includes(profile.id);
   const isBusy = busyProfiles.has(profile.id);
   const btnClass = isRunning ? 'btn-danger' : 'btn-success';
   const btnText = isBusy ? '处理中…' : (isRunning ? '关闭' : '启动');
   const launchFunc = isRunning ? 'closeBrowserOnly' : 'launchBrowserOnly';
   if (isUnknown) {
     const primaryAction = getUnknownStatusPrimaryAction(
-      retryableCloseBrowsers.has(profile.id),
+      retryableCloseIds.includes(profile.id),
     );
     return `
       <span class="status-unknown" title="无法确认上次记录的浏览器进程">状态未知</span>
@@ -157,12 +155,15 @@ function getStatusMarkup(profile) {
 // Render profiles list
 function renderProfiles() {
   const profilesList = document.getElementById('profilesList');
+  const snapshot = profileState.getSnapshot();
+  const { filter, query, selectedIds } = snapshot;
+  const selectedProfiles = new Set(selectedIds);
 
   // Filter profiles based on current filter and search query
   const filteredProfiles = getVisibleProfiles();
 
   if (filteredProfiles.length === 0) {
-    const hasActiveFilter = currentFilter !== 'all' || searchQuery !== '';
+    const hasActiveFilter = filter !== 'all' || query !== '';
     profilesList.innerHTML = `<p class="empty-message">${hasActiveFilter ? '没有找到匹配的配置' : '暂无配置，请点击上方按钮添加'}</p>`;
     updateSelectAllButton();
     updateLaunchSelectedButton();
@@ -187,7 +188,7 @@ function renderProfiles() {
         </span>
       </div>
       <div class="profile-actions">
-        <span class="profile-status-actions">${getStatusMarkup(profile)}</span>
+        <span class="profile-status-actions">${getStatusMarkup(profile, snapshot)}</span>
         <button class="btn btn-secondary btn-small" data-profile-action="open-folder" data-profile-id="${escapeHtml(profile.id)}">文件夹</button>
         <button class="btn btn-secondary btn-small" data-profile-action="profile-size" data-profile-id="${escapeHtml(profile.id)}">大小</button>
         <button class="btn btn-secondary btn-small" data-profile-action="clone" data-profile-id="${escapeHtml(profile.id)}">新建空白副本</button>
@@ -241,11 +242,15 @@ document.getElementById('profilesList').addEventListener('change', (event) => {
 });
 
 function updateVisibleStatusCards() {
+  const snapshot = profileState.getSnapshot();
+  const { profiles } = snapshot;
   const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
   document.querySelectorAll('.profile-card').forEach((card) => {
     const profile = profilesById.get(card.dataset.id);
     const statusContainer = card.querySelector('.profile-status-actions');
-    if (profile && statusContainer) statusContainer.innerHTML = getStatusMarkup(profile);
+    if (profile && statusContainer) {
+      statusContainer.innerHTML = getStatusMarkup(profile, snapshot);
+    }
   });
   updateLaunchSelectedButton();
   updateCloseSelectedButton();
@@ -281,8 +286,9 @@ document.getElementById('addProfileForm').addEventListener('submit', async (e) =
   try {
     const result = await window.browserAPI.addProfile(browserType, profileName);
     if (result.success) {
-      profiles.push(result.profile);
-      selectedProfiles.clear(); // Clear selection when adding new profile
+      const { profiles } = profileState.getSnapshot();
+      profileState.setProfiles([...profiles, result.profile]);
+      profileState.clearSelection(); // Clear selection when adding new profile
       renderProfiles();
       document.getElementById('profileName').value = '';
       document.getElementById('addModal').classList.remove('show');
@@ -304,6 +310,8 @@ async function deleteProfile(profileId) {
     return;
   }
   const trashData = confirm('是否同时将本地浏览器数据移入系统废纸篓？\n选择“取消”将保留数据。');
+  const initialSnapshot = profileState.getSnapshot();
+  const runningBrowsers = new Set(initialSnapshot.runningIds);
 
   // If browser is running, close it first
   if (runningBrowsers.has(profileId)) {
@@ -312,16 +320,27 @@ async function deleteProfile(profileId) {
       showToast('关闭浏览器失败：' + closeResult.error, 'error');
       return;
     }
-    runningBrowsers.delete(profileId);
+    const statusSnapshot = profileState.getSnapshot();
+    const runningIds = new Set(statusSnapshot.runningIds);
+    runningIds.delete(profileId);
+    profileState.setStatuses({
+      runningIds,
+      unknownIds: statusSnapshot.unknownIds,
+      retryableCloseIds: statusSnapshot.retryableCloseIds,
+    });
   }
 
   // Remove from selection if selected
-  selectedProfiles.delete(profileId);
+  if (profileState.getSnapshot().selectedIds.includes(profileId)) {
+    profileState.toggleSelection(profileId);
+  }
 
   const result = await window.browserAPI.deleteProfile(profileId, trashData);
 
   if (result.success) {
-    profiles = profiles.filter(p => p.id !== profileId);
+    profileState.setProfiles(
+      profileState.getSnapshot().profiles.filter(p => p.id !== profileId),
+    );
     renderProfiles();
     showToast(trashData ? '配置数据已移入系统废纸篓' : '已从列表移除，本地浏览器数据已保留', 'success');
   } else {
@@ -337,7 +356,12 @@ async function launchBrowserOnly(profileId) {
   try {
     const result = await window.browserAPI.launchBrowser(profileId);
     if (result.success) {
-      runningBrowsers.add(profileId);
+      const snapshot = profileState.getSnapshot();
+      profileState.setStatuses({
+        runningIds: [...snapshot.runningIds, profileId],
+        unknownIds: snapshot.unknownIds,
+        retryableCloseIds: snapshot.retryableCloseIds,
+      });
       showToast('浏览器已启动', 'success');
     } else {
       showToast('启动浏览器失败：' + result.error, 'error');
@@ -356,9 +380,12 @@ async function closeBrowserOnly(profileId) {
   try {
     const result = await window.browserAPI.closeBrowser(profileId);
     if (result.success) {
-      runningBrowsers.delete(profileId);
-      unknownBrowsers.delete(profileId);
-      retryableCloseBrowsers.delete(profileId);
+      const snapshot = profileState.getSnapshot();
+      profileState.setStatuses({
+        runningIds: snapshot.runningIds.filter((id) => id !== profileId),
+        unknownIds: snapshot.unknownIds.filter((id) => id !== profileId),
+        retryableCloseIds: snapshot.retryableCloseIds.filter((id) => id !== profileId),
+      });
       showToast('浏览器已关闭', 'success');
     } else {
       showToast('关闭浏览器失败：' + result.error, 'error');
@@ -380,7 +407,8 @@ async function cloneProfile(profileId) {
       showToast('新建空白副本失败：' + result.error, 'error');
       return;
     }
-    profiles.push(result.profile);
+    const { profiles } = profileState.getSnapshot();
+    profileState.setProfiles([...profiles, result.profile]);
     renderProfiles();
     showToast(`已创建 "${result.profile.name}"`, 'success');
   } finally {
@@ -416,7 +444,8 @@ async function showProfileSize(profileId) {
 async function refreshUnknownStatus(profileId) {
   try {
     await refreshStatuses(profileId);
-    showToast(unknownBrowsers.has(profileId) ? '仍无法确认进程状态' : '进程状态已更新', unknownBrowsers.has(profileId) ? 'warning' : 'success');
+    const isUnknown = profileState.getSnapshot().unknownIds.includes(profileId);
+    showToast(isUnknown ? '仍无法确认进程状态' : '进程状态已更新', isUnknown ? 'warning' : 'success');
   } catch (error) {
     showToast(`检测失败：${error.message}`, 'error');
   }
@@ -431,9 +460,12 @@ async function forgetProcess(profileId) {
     showToast(`忽略失败：${result.error}`, 'error');
     return;
   }
-  unknownBrowsers.delete(profileId);
-  runningBrowsers.delete(profileId);
-  retryableCloseBrowsers.delete(profileId);
+  const snapshot = profileState.getSnapshot();
+  profileState.setStatuses({
+    runningIds: snapshot.runningIds.filter((id) => id !== profileId),
+    unknownIds: snapshot.unknownIds.filter((id) => id !== profileId),
+    retryableCloseIds: snapshot.retryableCloseIds.filter((id) => id !== profileId),
+  });
   updateVisibleStatusCards();
   showToast('已清除旧进程记录，未终止任何进程', 'success');
 }
@@ -449,6 +481,7 @@ async function openProfileFolder(profileId) {
 
 // Rename profile
 async function renameProfile(profileId) {
+  const { profiles } = profileState.getSnapshot();
   const profile = profiles.find(p => p.id === profileId);
   if (!profile) {
     showToast('错误：配置不存在', 'error');
@@ -470,6 +503,7 @@ document.getElementById('confirmRename').addEventListener('click', async () => {
     return;
   }
 
+  const { profiles } = profileState.getSnapshot();
   const profile = profiles.find(p => p.id === currentRenameId);
   if (newName === profile.name) {
     closeModal();
@@ -484,6 +518,7 @@ document.getElementById('confirmRename').addEventListener('click', async () => {
       p.name = result.profile.name;
       p.path = result.profile.path;
     }
+    profileState.setProfiles(profiles);
     renderProfiles();
     closeModal();
     showToast(`已重命名为 "${newName}"`, 'success');
@@ -548,6 +583,10 @@ document.getElementById('openSettings').addEventListener('click', () => {
 
 // Launch selected profiles
 document.getElementById('launchSelectedBtn').addEventListener('click', async () => {
+  const snapshot = profileState.getSnapshot();
+  const selectedProfiles = new Set(snapshot.selectedIds);
+  const runningBrowsers = new Set(snapshot.runningIds);
+  const unknownBrowsers = new Set(snapshot.unknownIds);
   if (selectedProfiles.size === 0) {
     showToast('请先选择要启动的配置', 'warning');
     return;
@@ -571,24 +610,36 @@ document.getElementById('launchSelectedBtn').addEventListener('click', async () 
     } catch (error) {
       result = { success: false, error: error.message };
     }
-    if (result.success) {
-      runningBrowsers.add(profileId);
-    }
     return result;
   }, (completed, total) => {
     launchButton.textContent = `启动中 ${completed}/${total}`;
   });
   launchButton.disabled = false;
   launchButton.innerHTML = '启动选中 (<span id="selectedCount">0</span>)';
+  const statusSnapshot = profileState.getSnapshot();
+  const updatedRunningIds = new Set(statusSnapshot.runningIds);
+  results.forEach((result, index) => {
+    if (result.success) updatedRunningIds.add(toLaunch[index]);
+  });
+  profileState.setStatuses({
+    runningIds: updatedRunningIds,
+    unknownIds: statusSnapshot.unknownIds,
+    retryableCloseIds: statusSnapshot.retryableCloseIds,
+  });
 
   // Clear selection after launch
-  selectedProfiles.clear();
+  profileState.clearSelection();
   renderProfiles();
   showBatchResult('启动', results);
 });
 
 // Close selected profiles
 document.getElementById('closeSelectedBtn').addEventListener('click', async () => {
+  const snapshot = profileState.getSnapshot();
+  const selectedProfiles = new Set(snapshot.selectedIds);
+  const runningBrowsers = new Set(snapshot.runningIds);
+  const unknownBrowsers = new Set(snapshot.unknownIds);
+  const retryableCloseBrowsers = new Set(snapshot.retryableCloseIds);
   if (selectedProfiles.size === 0) {
     showToast('请先选择要关闭的配置', 'warning');
     return;
@@ -616,11 +667,6 @@ document.getElementById('closeSelectedBtn').addEventListener('click', async () =
     } catch (error) {
       result = { success: false, error: error.message };
     }
-    if (result.success) {
-      runningBrowsers.delete(profileId);
-      unknownBrowsers.delete(profileId);
-      retryableCloseBrowsers.delete(profileId);
-    }
     return result;
   }, (completed, total) => {
     closeButton.textContent = `关闭中 ${completed}/${total}`;
@@ -628,10 +674,22 @@ document.getElementById('closeSelectedBtn').addEventListener('click', async () =
   toClose.forEach((profileId) => busyProfiles.delete(profileId));
   closeButton.disabled = false;
   closeButton.innerHTML = '关闭选中 (<span id="closeSelectedCount">0</span>)';
+  const statusSnapshot = profileState.getSnapshot();
+  const runningIds = new Set(statusSnapshot.runningIds);
+  const unknownIds = new Set(statusSnapshot.unknownIds);
+  const retryableCloseIds = new Set(statusSnapshot.retryableCloseIds);
+  results.forEach((result, index) => {
+    if (!result.success) return;
+    const profileId = toClose[index];
+    runningIds.delete(profileId);
+    unknownIds.delete(profileId);
+    retryableCloseIds.delete(profileId);
+  });
+  profileState.setStatuses({ runningIds, unknownIds, retryableCloseIds });
   await refreshAllStatuses().catch(() => {});
 
   // Clear selection after close
-  selectedProfiles.clear();
+  profileState.clearSelection();
   renderProfiles();
   showBatchResult('关闭', results);
 });
@@ -654,12 +712,14 @@ document.getElementById('selectAllBtn').addEventListener('click', () => {
 });
 
 function toggleSelectVisibleProfiles() {
+  const { selectedIds } = profileState.getSnapshot();
+  const selectedProfiles = new Set(selectedIds);
   const allIds = getVisibleProfiles().map(p => p.id);
   const allSelected = allIds.every(id => selectedProfiles.has(id));
 
   if (allSelected) {
     // 取消全选
-    allIds.forEach(id => selectedProfiles.delete(id));
+    allIds.forEach(id => profileState.toggleSelection(id));
     document.querySelectorAll('.profile-card.selected').forEach(card => {
       card.classList.remove('selected');
     });
@@ -668,7 +728,9 @@ function toggleSelectVisibleProfiles() {
     });
   } else {
     // 全选
-    allIds.forEach(id => selectedProfiles.add(id));
+    allIds.filter(id => !selectedProfiles.has(id)).forEach(
+      id => profileState.toggleSelection(id),
+    );
     document.querySelectorAll('.profile-card').forEach(card => {
       card.classList.add('selected');
     });
@@ -692,8 +754,13 @@ document.addEventListener('keydown', (e) => {
   }
 
   // Space to launch selected when profiles are selected
+  const snapshot = profileState.getSnapshot();
+  const selectedProfiles = new Set(snapshot.selectedIds);
   if (e.key === ' ' && selectedProfiles.size > 0) {
     e.preventDefault();
+    const runningBrowsers = new Set(snapshot.runningIds);
+    const unknownBrowsers = new Set(snapshot.unknownIds);
+    const retryableCloseBrowsers = new Set(snapshot.retryableCloseIds);
     const notRunningSelected = Array.from(selectedProfiles).filter(
       id => !runningBrowsers.has(id) && !unknownBrowsers.has(id),
     );
@@ -718,12 +785,12 @@ function toggleProfileSelection(profileId) {
 
   if (!card || !checkbox) return;
 
-  if (selectedProfiles.has(profileId)) {
-    selectedProfiles.delete(profileId);
+  const isSelected = profileState.getSnapshot().selectedIds.includes(profileId);
+  profileState.toggleSelection(profileId);
+  if (isSelected) {
     card.classList.remove('selected');
     checkbox.checked = false;
   } else {
-    selectedProfiles.add(profileId);
     card.classList.add('selected');
     checkbox.checked = true;
   }
@@ -736,6 +803,7 @@ function toggleProfileSelection(profileId) {
 // Update select all button text
 function updateSelectAllButton() {
   const selectAllBtn = document.getElementById('selectAllBtn');
+  const selectedProfiles = new Set(profileState.getSnapshot().selectedIds);
   const visibleProfiles = getVisibleProfiles();
   if (selectAllBtn && visibleProfiles.length > 0) {
     const allSelected = visibleProfiles.every(p => selectedProfiles.has(p.id));
@@ -751,6 +819,10 @@ function updateLaunchSelectedButton() {
   const selectedCount = document.getElementById('selectedCount');
 
   if (launchSelectedBtn && selectedCount) {
+    const snapshot = profileState.getSnapshot();
+    const selectedProfiles = new Set(snapshot.selectedIds);
+    const runningBrowsers = new Set(snapshot.runningIds);
+    const unknownBrowsers = new Set(snapshot.unknownIds);
     const notRunningSelected = Array.from(selectedProfiles).filter(
       id => !runningBrowsers.has(id) && !unknownBrowsers.has(id),
     );
@@ -770,6 +842,10 @@ function updateCloseSelectedButton() {
   const closeSelectedCount = document.getElementById('closeSelectedCount');
 
   if (closeSelectedBtn && closeSelectedCount) {
+    const snapshot = profileState.getSnapshot();
+    const selectedProfiles = new Set(snapshot.selectedIds);
+    const runningBrowsers = new Set(snapshot.runningIds);
+    const retryableCloseBrowsers = new Set(snapshot.retryableCloseIds);
     const runningSelected = filterCloseableProfileIds(
       selectedProfiles,
       runningBrowsers,
@@ -850,10 +926,9 @@ const searchInput = document.getElementById('searchInput');
 if (searchInput) {
   let searchTimer;
   searchInput.addEventListener('input', (e) => {
-    searchQuery = e.target.value;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
-      selectedProfiles = retainVisibleSelection(selectedProfiles, getVisibleProfiles());
+      profileState.setQuery(e.target.value);
       renderProfiles();
     }, 150);
   });
@@ -869,7 +944,7 @@ if (searchInput) {
     // Escape to clear search
     if (e.key === 'Escape' && document.activeElement === searchInput) {
       searchInput.value = '';
-      searchQuery = '';
+      profileState.setQuery('');
       renderProfiles();
       searchInput.blur();
     }
@@ -881,8 +956,7 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    currentFilter = btn.dataset.filter;
-    selectedProfiles = retainVisibleSelection(selectedProfiles, getVisibleProfiles());
+    profileState.setFilter(btn.dataset.filter);
     renderProfiles();
   });
 });
@@ -904,7 +978,8 @@ document.getElementById('importProfilesBtn')?.addEventListener('click', async ()
       if (!result.canceled) showToast(`导入失败：${result.error}`, 'error');
       return;
     }
-    profiles.push(...result.profiles);
+    const { profiles } = profileState.getSnapshot();
+    profileState.setProfiles([...profiles, ...result.profiles]);
     renderProfiles();
     showToast(`已导入 ${result.profiles.length} 个配置，跳过 ${result.skipped} 个重复项`, 'success');
   } catch (error) {
