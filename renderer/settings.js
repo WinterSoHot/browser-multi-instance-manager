@@ -13,10 +13,23 @@ let customSettings = {};
 let defaultPaths = {};
 let currentPlatform = '';
 let browserValidity = {};
+const appSettingsController = window.createAppSettingsController({
+  getAppSettings: () => window.browserAPI.getAppSettings(),
+  setAppSettings: (settings) => window.browserAPI.setAppSettings(settings),
+});
 
 function setSettingsBusy(busy) {
   document.getElementById('saveSettings').disabled = busy;
   document.getElementById('resetSettings').disabled = busy;
+}
+
+function setAppSettingsBusy(busy) {
+  document.getElementById('closeToTray').disabled = busy;
+}
+
+async function loadAppSettings() {
+  const settings = await appSettingsController.load();
+  document.getElementById('closeToTray').checked = settings.closeToTray;
 }
 
 // Load settings on startup
@@ -29,6 +42,8 @@ async function loadSettings() {
   customSettings = environment.settings;
   defaultPaths = environment.defaultPaths;
   browserValidity = environment.validity;
+
+  await loadAppSettings();
 
   // Load default view mode
   const savedViewMode = localStorage.getItem('defaultViewMode');
@@ -151,6 +166,18 @@ document.getElementById('resetSettings').addEventListener('click', async () => {
   } finally {
     setSettingsBusy(false);
   }
+});
+
+document.getElementById('closeToTray').addEventListener('change', async (event) => {
+  const checkbox = event.currentTarget;
+  const requestedValue = checkbox.checked;
+  setAppSettingsBusy(true);
+  const result = await appSettingsController.save({ closeToTray: requestedValue });
+  checkbox.checked = result.settings.closeToTray;
+  if (!result.success) {
+    alert('保存托盘设置失败，请重试');
+  }
+  setAppSettingsBusy(false);
 });
 
 // Back to home

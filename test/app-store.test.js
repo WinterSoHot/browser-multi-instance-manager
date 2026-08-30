@@ -5,6 +5,7 @@ const {
   CURRENT_SCHEMA_VERSION,
   createAppStore,
   migrateStoreData,
+  validateAppSettings,
 } = require('../lib/app-store');
 
 const legacyProfile = {
@@ -74,6 +75,19 @@ test('migration is idempotent', () => {
   assert.deepEqual(migrateStoreData(once), once);
 });
 
+test('app settings migrate close-to-tray to a true default and stay idempotent', () => {
+  const once = migrateStoreData({ appSettings: {} });
+
+  assert.deepEqual(once.appSettings, { closeToTray: true });
+  assert.deepEqual(migrateStoreData(once), once);
+});
+
+test('app settings accept booleans and reject unknown keys or wrong types', () => {
+  assert.deepEqual(validateAppSettings({ closeToTray: false }), { closeToTray: false });
+  assert.throws(() => validateAppSettings({ closeToTray: 'no' }), /Invalid app settings/u);
+  assert.throws(() => validateAppSettings({ arbitrary: true }), /Invalid app settings/u);
+});
+
 test('adapter writes a changed legacy snapshot once and returns defensive copies', () => {
   const store = createStore(legacyData);
   const appStore = createAppStore(store);
@@ -100,7 +114,7 @@ test('adapter leaves a current snapshot unwritten', () => {
     workspaces: [],
     browserSettings: {},
     runningBrowserProcesses: [],
-    appSettings: {},
+    appSettings: { closeToTray: true },
   };
   const store = createStore(migrated);
 
@@ -117,6 +131,8 @@ test('adapter rejects malformed present collections and settings without writing
     { ...legacyData, runningBrowserProcesses: { corrupted: true } },
     { ...legacyData, browserSettings: [] },
     { ...legacyData, appSettings: [] },
+    { ...legacyData, appSettings: { closeToTray: 'yes' } },
+    { ...legacyData, appSettings: { unknown: true } },
   ];
 
   for (const snapshot of invalidSnapshots) {
@@ -239,6 +255,18 @@ test('runtime profile and workspace writes validate the complete collection befo
   );
   assert.deepEqual(store.getData(), current);
   assert.deepEqual(store.getWrites(), []);
+});
+
+test('runtime app settings writes validate before persisting', () => {
+  const current = migrateStoreData(legacyData);
+  const store = createStore(current);
+  const appStore = createAppStore(store);
+
+  appStore.setAppSettings({ closeToTray: false });
+  assert.deepEqual(appStore.getAppSettings(), { closeToTray: false });
+  assert.throws(() => appStore.setAppSettings({ closeToTray: 'false' }), /Invalid app settings/u);
+  assert.throws(() => appStore.setAppSettings({ closeToTray: true, extra: true }), /Invalid app settings/u);
+  assert.deepEqual(store.getData().appSettings, { closeToTray: false });
 });
 
 test('adapter rejects unsupported future schema versions without writing', () => {

@@ -29,6 +29,8 @@ const expectedChannels = [
   'get-platform',
   'get-browser-environment',
   'browse-folder',
+  'get-app-settings',
+  'set-app-settings',
   'get-workspaces',
   'create-workspace',
   'rename-workspace',
@@ -43,6 +45,7 @@ function createHandlerFixture({
   profileService: profileOverrides = {},
   browserProcessManager: processOverrides = {},
   settingsService: settingsOverrides = {},
+  appSettingsService: appSettingsOverrides = {},
   workspaceService: workspaceOverrides = {},
   diagnosticsService: diagnosticsOverrides = {},
 } = {}) {
@@ -87,6 +90,11 @@ function createHandlerFixture({
       getEnvironment: () => ({}),
       browseFolder: () => {},
       ...settingsOverrides,
+    },
+    appSettingsService: {
+      get: () => ({ closeToTray: true }),
+      set: () => ({ success: true, settings: { closeToTray: true } }),
+      ...appSettingsOverrides,
     },
     workspaceService: {
       list: () => [],
@@ -355,6 +363,35 @@ test('settings IPC delegates payloads and forwards environment results', async (
     await handlers.get('get-browser-environment')({}, undefined),
     environment,
   );
+});
+
+test('app settings IPC exposes only validated settings and sanitizes failures', async () => {
+  let patch;
+  const { handlers } = createHandlerFixture({
+    appSettingsService: {
+      get: () => ({ closeToTray: false, path: privatePath }),
+      set(value) {
+        patch = value;
+        return { success: true, settings: { closeToTray: false, path: privatePath } };
+      },
+    },
+  });
+
+  assert.deepEqual(await handlers.get('get-app-settings')({}, undefined), { closeToTray: false });
+  assert.deepEqual(await handlers.get('set-app-settings')({}, { closeToTray: false }), {
+    success: true,
+    settings: { closeToTray: false },
+  });
+  assert.deepEqual(patch, { closeToTray: false });
+
+  const failure = createHandlerFixture({
+    appSettingsService: { set: () => Promise.reject(new Error(privatePath)) },
+  });
+  assert.deepEqual(await failure.handlers.get('set-app-settings')({}, { closeToTray: false }), {
+    success: false,
+    code: 'APP_SETTINGS_REQUEST_FAILED',
+    error: 'Unable to save app settings',
+  });
 });
 
 test('workspace IPC delegates narrow payloads and rejects invalid identifiers or favorites', async () => {

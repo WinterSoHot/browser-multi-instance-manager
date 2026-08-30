@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('browserAPI', {
   getPlatform: () => ipcRenderer.invoke('get-platform'),
   getBrowserEnvironment: () => ipcRenderer.invoke('get-browser-environment'),
   browseFolder: (defaultPath) => ipcRenderer.invoke('browse-folder', defaultPath),
+  getAppSettings: () => ipcRenderer.invoke('get-app-settings'),
+  setAppSettings: (settings) => ipcRenderer.invoke('set-app-settings', settings),
   getWorkspaces: () => ipcRenderer.invoke('get-workspaces'),
   createWorkspace: (name) => ipcRenderer.invoke('create-workspace', { name }),
   renameWorkspace: (workspaceId, name) => (

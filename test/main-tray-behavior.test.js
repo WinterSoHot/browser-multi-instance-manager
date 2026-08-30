@@ -126,6 +126,14 @@ async function loadMain({ profiles = [], platform = process.platform } = {}) {
     if (request === './lib/browser-settings-service') {
       return { createBrowserSettingsService: () => ({ getExecutable: () => '' }) };
     }
+    if (request === './lib/app-settings-service') {
+      return {
+        createAppSettingsService: () => ({
+          get: () => ({ closeToTray: true }),
+          set: async () => ({ success: true, settings: { closeToTray: true } }),
+        }),
+      };
+    }
     if (request === './lib/profile-service') return { createProfileService: () => emptyService };
     if (request === './lib/import-export-service') {
       return { createImportExportService: () => ({ previewImport: () => {}, executeImport: () => {} }) };

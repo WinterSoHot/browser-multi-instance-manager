@@ -114,6 +114,17 @@ function loadMainWithFakes() {
         },
       };
     }
+    if (request === './lib/app-settings-service') {
+      return {
+        createAppSettingsService(options) {
+          serviceOptions.appSettings = options;
+          return {
+            get: () => ({ closeToTray: false }),
+            set: () => ({ success: true, settings: { closeToTray: false } }),
+          };
+        },
+      };
+    }
     return originalLoad.call(this, request, parent, isMain);
   };
   try {
@@ -157,4 +168,11 @@ test('main constructs diagnostics with the shared profile coordinator and inject
   assert.deepEqual(await handlers.get('inspect-profile-diagnostics')({}, 'profile-1'), {
     code: 'HEALTHY', state: 'healthy', actions: [],
   });
+});
+
+test('main constructs app settings with the shared settings queue and injects it into IPC', async () => {
+  const { handlers, serviceOptions } = loadMainWithFakes();
+
+  assert.equal(serviceOptions.appSettings.appStore, serviceOptions.profile.appStore);
+  assert.deepEqual(await handlers.get('get-app-settings')({}, undefined), { closeToTray: false });
 });

@@ -21,6 +21,7 @@ const { BrowserProcessManager } = require("./lib/browser-process-manager");
 const { createAsyncQueue } = require("./lib/async-queue");
 const { createAppStore } = require("./lib/app-store");
 const { createBrowserSettingsService } = require("./lib/browser-settings-service");
+const { createAppSettingsService } = require("./lib/app-settings-service");
 const { createProfileService } = require("./lib/profile-service");
 const { createImportExportService } = require("./lib/import-export-service");
 const { createWorkspaceService } = require("./lib/workspace-service");
@@ -51,6 +52,7 @@ const store = new Store({
     profiles: [],
     browserSettings: {},
     runningBrowserProcesses: [],
+    appSettings: { closeToTray: true },
   },
 });
 const appStore = createAppStore(store);
@@ -129,6 +131,11 @@ const settingsService = createBrowserSettingsService({
   showOpenDialog: (options) => dialog.showOpenDialog(mainWindow, options),
 });
 
+const appSettingsService = createAppSettingsService({
+  appStore,
+  enqueueMutation: enqueueSettingsMutation,
+});
+
 const importExportService = createImportExportService({
   appStore,
   profileOperations,
@@ -202,6 +209,7 @@ const unregisterIpcHandlers = registerIpcHandlers({
   profileService,
   browserProcessManager,
   settingsService,
+  appSettingsService,
   workspaceService,
   diagnosticsService,
 });

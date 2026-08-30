@@ -97,3 +97,15 @@ test('preload exposes narrow diagnostics calls that accept only a profile ID', a
     { channel: 'repair-profile-directory', args: ['profile-1'] },
   ]);
 });
+
+test('preload exposes narrow app settings calls', async () => {
+  const { browserApi, invocations } = loadBrowserApi();
+
+  await browserApi.getAppSettings();
+  await browserApi.setAppSettings({ closeToTray: false });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(invocations)), [
+    { channel: 'get-app-settings', args: [] },
+    { channel: 'set-app-settings', args: [{ closeToTray: false }] },
+  ]);
+});
