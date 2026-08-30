@@ -28,7 +28,7 @@
 - Modify: `lib/window-lifecycle.js`
 
 **Interfaces:**
-- Produces: `createAppLifecycle({ getCloseToTray, getActiveStatusCount, confirmExit, hideWindow, destroyTray, quitApp })` with `handleWindowClose(event)`, `requestQuit()`, and `isQuitting()`.
+- Produces: `createAppLifecycle({ platform, getCloseToTray, getActiveStatusCount, confirmExit, hideWindow, destroyTray, quitApp })` with `handleWindowClose(event)`, `handleBeforeQuit(event)`, `requestQuit()`, and `isQuitting()`.
 
 - [ ] **Step 1: Add failing lifecycle tests**
 
@@ -54,7 +54,7 @@ Run: `node --test test/app-lifecycle.test.js`
 
 - [ ] **Step 3: Implement explicit lifecycle state**
 
-`requestQuit` obtains one status snapshot. When running or unknown count is positive, call `confirmExit(counts)`; confirmation only permits manager exit and never calls a browser-close API. Set `isQuitting` immediately before destroying the tray and calling `quitApp`.
+`requestQuit` obtains one forced bulk status snapshot. When running or unknown count is positive, call `confirmExit(counts)`; confirmation only permits manager exit and never calls a browser-close API. Set `isQuitting` immediately before destroying the tray and calling `quitApp`. On Windows/Linux, closing the last window with close-to-tray disabled routes through `requestQuit`; on macOS it follows the normal close-window behavior. `handleBeforeQuit` prevents and reroutes every external quit path until `isQuitting` is set.
 
 - [ ] **Step 4: Verify and commit**
 
@@ -74,7 +74,7 @@ git commit -m "新增托盘关闭与退出生命周期"
 - Modify: `build/icons/icon.png` only if the existing icon is unreadable at tray size
 
 **Interfaces:**
-- Produces: `createTrayManager({ Tray, Menu, iconPath, showWindow, requestQuit, listFavoriteProfiles, launchProfiles, getStatuses })` with `create()`, `refresh()`, and `destroy()`.
+- Produces: `createTrayManager({ Tray, Menu, createTrayIcon, showWindow, requestQuit, listFavoriteProfiles, launchProfiles, getStatuses })` with `create()`, `refresh()`, and `destroy()`.
 
 - [ ] **Step 1: Add failing menu-model tests**
 
@@ -92,7 +92,7 @@ Run: `node --test test/tray-manager.test.js`
 
 - [ ] **Step 3: Implement bounded menu construction**
 
-Show at most 20 favorite profiles directly; place remaining items behind the main-window action. Disable launch entries already running or unknown. Double-clicking the tray opens the existing window via `ensureMainWindow()`.
+Show at most 20 favorite profiles directly; place remaining items behind the main-window action. Include a single-flight “launch all favorites” action and keep all tray launches at four concurrent operations after one forced bulk status snapshot. Disable launch entries already running or unknown. Double-clicking the tray opens the existing window via `ensureMainWindow()`.
 
 - [ ] **Step 4: Refresh on state and metadata changes**
 
