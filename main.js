@@ -74,6 +74,8 @@ let latestAutomaticUpdateResult = null;
 let dismissedAutomaticUpdateVersion = null;
 let updateHomeContext = null;
 let updateHomeNavigationGeneration = 0;
+let automaticUpdateResultRevision = 0;
+let deliveredAutomaticUpdate = null;
 const currentAppVersion = typeof app.getVersion === "function" ? app.getVersion() : "0.0.0";
 const homePageUrl = pathToFileURL(path.join(__dirname, "renderer", "index.html")).href;
 const updateChecker = createUpdateChecker({
@@ -109,6 +111,14 @@ function isDismissedAutomaticUpdate(result) {
   return Boolean(version && dismissedAutomaticUpdateVersion === version);
 }
 
+function wasAutomaticUpdateDelivered(context) {
+  return deliveredAutomaticUpdate?.webContents === context.webContents
+    && deliveredAutomaticUpdate.frame === context.frame
+    && deliveredAutomaticUpdate.generation === context.generation
+    && deliveredAutomaticUpdate.revision === automaticUpdateResultRevision
+    && deliveredAutomaticUpdate.result === latestAutomaticUpdateResult;
+}
+
 function replayAutomaticUpdateResult() {
   if (!latestAutomaticUpdateResult || isDismissedAutomaticUpdate(latestAutomaticUpdateResult)) return;
   const context = updateHomeContext;
@@ -116,8 +126,16 @@ function replayAutomaticUpdateResult() {
     || !isCurrentHomeWebContents(context.webContents)
     || context.webContents.mainFrame !== context.frame
     || context.frame?.url !== homePageUrl) return;
+  if (wasAutomaticUpdateDelivered(context)) return;
   try {
     context.webContents.send("update-check-result", latestAutomaticUpdateResult);
+    deliveredAutomaticUpdate = {
+      webContents: context.webContents,
+      frame: context.frame,
+      generation: context.generation,
+      revision: automaticUpdateResultRevision,
+      result: latestAutomaticUpdateResult,
+    };
   } catch {
     updateHomeContext = null;
   }
@@ -289,6 +307,7 @@ function createWindow() {
       void Promise.resolve(updateChecker.check({ force: false })).then((result) => {
         const safeResult = sanitizeUpdateResult(result, currentAppVersion);
         latestAutomaticUpdateResult = safeResult;
+        automaticUpdateResultRevision += 1;
         replayAutomaticUpdateResult();
       }).catch(() => {});
     });
@@ -297,12 +316,18 @@ function createWindow() {
     if (isMainFrame !== true) return;
     updateHomeNavigationGeneration += 1;
     if (updateHomeContext?.webContents === window.webContents) updateHomeContext = null;
+    if (deliveredAutomaticUpdate?.webContents === window.webContents) {
+      deliveredAutomaticUpdate = null;
+    }
   });
   window.on("close", (event) => {
     void appLifecycle.handleWindowClose(event);
   });
   window.on("closed", () => {
     if (updateHomeContext?.webContents === window.webContents) updateHomeContext = null;
+    if (deliveredAutomaticUpdate?.webContents === window.webContents) {
+      deliveredAutomaticUpdate = null;
+    }
     if (mainWindow === window) mainWindow = undefined;
   });
   return window;

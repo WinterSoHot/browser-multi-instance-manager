@@ -379,6 +379,53 @@ test('a recreated ready home page receives an automatic result that resolves aft
   assert.deepEqual(harness.sent, [{ channel: 'update-check-result', payload: result }]);
 });
 
+test('a result-first home document receives one automatic result across repeated ready handshakes', async () => {
+  const result = { status: 'current' };
+  const harness = await loadMain({ updateResult: result });
+  const window = harness.windows[0];
+  window.webContents.emit('did-finish-load');
+  await waitForMainTurn();
+
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window));
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window));
+
+  assert.deepEqual(harness.sent, [{ channel: 'update-check-result', payload: result }]);
+});
+
+test('a ready-first home document does not replay the resolved automatic result on a duplicate handshake', async () => {
+  const pending = deferred();
+  const result = { status: 'current' };
+  const harness = await loadMain({ updateResult: pending.promise });
+  const window = harness.windows[0];
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window));
+  window.webContents.emit('did-finish-load');
+  pending.resolve(result);
+  await waitForMainTurn();
+
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window));
+
+  assert.deepEqual(harness.sent, [{ channel: 'update-check-result', payload: result }]);
+});
+
+test('a returned home document receives the retained automatic result once', async () => {
+  const result = { status: 'current' };
+  const harness = await loadMain({ updateResult: result });
+  const window = harness.windows[0];
+  window.webContents.emit('did-finish-load');
+  await waitForMainTurn();
+
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window));
+  navigate(window, settingsPageUrl);
+  navigate(window, homePageUrl);
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window));
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window));
+
+  assert.deepEqual(harness.sent, [
+    { channel: 'update-check-result', payload: result },
+    { channel: 'update-check-result', payload: result },
+  ]);
+});
+
 test('dismissed automatic version stays hidden across settings navigation and window recreation', async () => {
   const result = {
     status: 'available',
