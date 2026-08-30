@@ -18,6 +18,32 @@
   normalizeStatusSnapshot,
   summarizeResults,
 }) => {
+  const batchFailureMessages = {
+    BROWSER_PATH_INVALID: '浏览器路径不可用',
+    BROWSER_ALREADY_RUNNING: '浏览器已在运行',
+    PROFILE_LAUNCH_FAILED: '启动失败',
+    PROCESS_STATE_UNKNOWN: '进程状态未知',
+    PROFILE_NOT_FOUND: '配置不存在',
+    PROFILE_REQUEST_FAILED: '请求失败',
+    PROCESS_REQUEST_FAILED: '请求失败',
+    BATCH_OPERATION_FAILED: '请求失败',
+  };
+
+  function sanitizeBatchResult(result) {
+    if (result?.success === true) {
+      return {
+        success: true,
+        ...(result.warningCode === 'LAST_LAUNCHED_AT_NOT_RECORDED'
+          ? { warningCode: result.warningCode }
+          : {}),
+      };
+    }
+    const code = Object.prototype.hasOwnProperty.call(batchFailureMessages, result?.code)
+      ? result.code
+      : 'BATCH_OPERATION_FAILED';
+    return { success: false, code, error: batchFailureMessages[code] };
+  }
+
   async function executeWorkspaceBatch({
     action,
     profiles,
@@ -45,9 +71,9 @@
     const worker = action === 'launch' ? launchBrowser : closeBrowser;
     const results = await mapWithConcurrency(targetIds, 4, async (profileId) => {
       try {
-        return await worker(profileId);
-      } catch (error) {
-        return { success: false, error: error?.message || '请求失败' };
+        return sanitizeBatchResult(await worker(profileId));
+      } catch {
+        return sanitizeBatchResult(null);
       }
     }, onProgress);
     const summary = summarizeResults(results);
@@ -75,5 +101,30 @@
     };
   }
 
-  return { executeWorkspaceBatch, createWorkspaceBatchRunner };
+  function createPageBatchCoordinator(onBusyChange = () => {}) {
+    let running = false;
+    return {
+      async run(operation) {
+        if (running) return { skipped: true, code: 'BATCH_ALREADY_RUNNING' };
+        running = true;
+        try {
+          onBusyChange(true);
+          return await operation();
+        } finally {
+          running = false;
+          onBusyChange(false);
+        }
+      },
+      isRunning() {
+        return running;
+      },
+    };
+  }
+
+  return {
+    executeWorkspaceBatch,
+    createWorkspaceBatchRunner,
+    createPageBatchCoordinator,
+    sanitizeBatchResult,
+  };
 }));

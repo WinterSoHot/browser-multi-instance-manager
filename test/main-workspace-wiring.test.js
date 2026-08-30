@@ -126,10 +126,10 @@ function loadMainWithFakes() {
   return { handlers, serviceOptions };
 }
 
-test('main constructs the workspace service and injects it into IPC registration', () => {
+test('main constructs the workspace service and injects it into IPC registration', async () => {
   const { handlers } = loadMainWithFakes();
 
-  assert.deepEqual(handlers.get('get-workspaces')({}, undefined), []);
+  assert.deepEqual(await handlers.get('get-workspaces')({}, undefined), []);
 });
 
 test('main injects one shared profile-operation coordinator into profile and workspace services', () => {
@@ -143,6 +143,7 @@ test('main constructs the import service with safe directory primitives and give
 
   assert.equal(serviceOptions.importExport.profileOperations, serviceOptions.profile.profileOperations);
   assert.equal(typeof serviceOptions.importExport.getProfilePath, 'function');
+  assert.equal(typeof serviceOptions.importExport.createEmptyProfileDir, 'function');
   assert.equal(typeof serviceOptions.importExport.removeEmptyDirectory, 'function');
   assert.equal(serviceOptions.profile.importExportService, serviceOptions.importService);
 });

@@ -120,8 +120,7 @@ const importExportService = createImportExportService({
   appStore,
   profileOperations,
   getProfilePath,
-  createProfileDir,
-  pathExists,
+  createEmptyProfileDir,
   removeEmptyDirectory,
   now: () => Date.now(),
 });

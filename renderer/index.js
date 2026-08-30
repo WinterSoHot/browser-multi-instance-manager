@@ -16,7 +16,11 @@ const {
   summarizeResults,
 } = window.viewUtils;
 const { createProfileState } = window.profileState;
-const { executeWorkspaceBatch, createWorkspaceBatchRunner } = window.workspaceBatch;
+const {
+  executeWorkspaceBatch,
+  createPageBatchCoordinator,
+  sanitizeBatchResult,
+} = window.workspaceBatch;
 const {
   buildImportDecisions,
   createImportPreviewState,
@@ -46,6 +50,20 @@ const diagnosticsFocusManager = createModalFocusManager((container) => (
   Array.from(container.querySelectorAll('[data-diagnostic-action], #closeDiagnostics'))
     .filter((element) => !element.disabled)
 ));
+
+function setPageBatchBusy(busy) {
+  [
+    'launchWorkspaceBtn',
+    'closeWorkspaceBtn',
+    'launchSelectedBtn',
+    'closeSelectedBtn',
+  ].forEach((buttonId) => {
+    const button = document.getElementById(buttonId);
+    if (button) button.disabled = busy;
+  });
+}
+
+const pageBatchCoordinator = createPageBatchCoordinator(setPageBatchBusy);
 
 const diagnosticMessages = {
   'process-unknown': '无法确认该配置关联的浏览器进程。请重新检测后再进行目录操作。',
@@ -107,8 +125,8 @@ async function loadProfiles() {
   workspaces = Array.isArray(loadedWorkspaces) ? loadedWorkspaces : [];
   try {
     await Promise.all([refreshAllStatuses(), refreshDiagnostics()]);
-  } catch (error) {
-    showToast(`加载进程状态失败：${error.message}`, 'warning');
+  } catch {
+    showToast('加载进程状态失败，请重试', 'warning');
   }
   renderProfiles();
 
@@ -378,8 +396,8 @@ async function toggleProfileFavorite(profileId) {
       return;
     }
     showToast(profile.favorite ? '已取消收藏' : '已添加到收藏', 'success');
-  } catch (error) {
-    showToast(`收藏更新失败：${error?.message || '请求失败'}`, 'error');
+  } catch {
+    showToast('收藏更新失败，请重试', 'error');
   }
 }
 
@@ -392,8 +410,8 @@ async function assignProfileWorkspace(profileId, workspaceId) {
       return;
     }
     showToast(workspaceId === null ? '已移出工作区' : '工作区归属已更新', 'success');
-  } catch (error) {
-    showToast(`工作区归属更新失败：${error?.message || '请求失败'}`, 'error');
+  } catch {
+    showToast('工作区归属更新失败，请重试', 'error');
     renderProfiles();
   }
 }
@@ -441,8 +459,8 @@ async function refreshProfilesAfterSuccessfulLaunch(results) {
   try {
     profileState.setProfiles(await window.browserAPI.getProfiles());
     return true;
-  } catch (error) {
-    showToast(`刷新配置失败：${error?.message || '请求失败'}`, 'warning');
+  } catch {
+    showToast('刷新配置失败，请重试', 'warning');
     return false;
   }
 }
@@ -464,8 +482,6 @@ async function performWorkspaceBatch(action) {
   const launchButton = document.getElementById('launchWorkspaceBtn');
   const closeButton = document.getElementById('closeWorkspaceBtn');
   const activeButton = action === 'launch' ? launchButton : closeButton;
-  launchButton.disabled = true;
-  closeButton.disabled = true;
   targets.forEach((profile) => busyProfiles.add(profile.id));
   renderProfiles();
   try {
@@ -490,15 +506,15 @@ async function performWorkspaceBatch(action) {
     showBatchResult(action === 'launch' ? '启动' : '关闭', batch.results);
   } finally {
     targets.forEach((profile) => busyProfiles.delete(profile.id));
-    launchButton.disabled = false;
-    closeButton.disabled = false;
     launchButton.textContent = '启动工作区';
     closeButton.textContent = '关闭工作区';
     updateVisibleStatusCards();
   }
 }
 
-const runWorkspaceBatch = createWorkspaceBatchRunner(performWorkspaceBatch);
+function runWorkspaceBatch(action) {
+  return pageBatchCoordinator.run(() => performWorkspaceBatch(action));
+}
 
 document.getElementById('profilesList').addEventListener('click', (event) => {
   const button = event.target.closest('[data-profile-action]');
@@ -526,8 +542,8 @@ document.getElementById('profilesList').addEventListener('click', (event) => {
   };
   const action = actions[button.dataset.profileAction];
   if (action) {
-    void Promise.resolve(action(profileId, button)).catch((error) => {
-      showToast(`操作失败：${error.message}`, 'error');
+    void Promise.resolve(action(profileId, button)).catch(() => {
+      showToast('操作失败，请重试', 'error');
     });
   }
 });
@@ -747,8 +763,8 @@ document.getElementById('addProfileForm').addEventListener('submit', async (e) =
     } else {
       showToast('错误：' + result.error, 'error');
     }
-  } catch (error) {
-    showToast(`新建配置失败：${error.message}`, 'error');
+  } catch {
+    showToast('新建配置失败，请重试', 'error');
   } finally {
     delete e.currentTarget.dataset.busy;
     submitButton.disabled = false;
@@ -903,8 +919,8 @@ async function refreshUnknownStatus(profileId) {
     await refreshStatuses(profileId);
     const isUnknown = profileState.getSnapshot().unknownIds.includes(profileId);
     showToast(isUnknown ? '仍无法确认进程状态' : '进程状态已更新', isUnknown ? 'warning' : 'success');
-  } catch (error) {
-    showToast(`检测失败：${error.message}`, 'error');
+  } catch {
+    showToast('检测失败，请重试', 'error');
   }
 }
 
@@ -1038,7 +1054,7 @@ document.getElementById('openSettings').addEventListener('click', () => {
 });
 
 // Launch selected profiles
-document.getElementById('launchSelectedBtn').addEventListener('click', async () => {
+async function performSelectedLaunch() {
   const snapshot = profileState.getSnapshot();
   const selectedProfiles = new Set(snapshot.selectedIds);
   const runningBrowsers = new Set(snapshot.runningIds);
@@ -1058,43 +1074,48 @@ document.getElementById('launchSelectedBtn').addEventListener('click', async () 
   }
 
   const launchButton = document.getElementById('launchSelectedBtn');
-  launchButton.disabled = true;
   toLaunch.forEach((profileId) => busyProfiles.add(profileId));
   updateVisibleStatusCards();
-  const results = await mapWithConcurrency(toLaunch, 4, async (profileId) => {
-    let result;
-    try {
-      result = await window.browserAPI.launchBrowser(profileId);
-    } catch (error) {
-      result = { success: false, error: error.message };
-    }
-    return result;
-  }, (completed, total) => {
-    launchButton.textContent = `启动中 ${completed}/${total}`;
-  });
-  toLaunch.forEach((profileId) => busyProfiles.delete(profileId));
-  launchButton.disabled = false;
-  launchButton.innerHTML = '启动选中 (<span id="selectedCount">0</span>)';
-  const statusSnapshot = profileState.getSnapshot();
-  const updatedRunningIds = new Set(statusSnapshot.runningIds);
-  results.forEach((result, index) => {
-    if (result.success) updatedRunningIds.add(toLaunch[index]);
-  });
-  profileState.setStatuses({
-    runningIds: updatedRunningIds,
-    unknownIds: statusSnapshot.unknownIds,
-    retryableCloseIds: statusSnapshot.retryableCloseIds,
-  });
-  await refreshProfilesAfterSuccessfulLaunch(results);
+  try {
+    const results = await mapWithConcurrency(toLaunch, 4, async (profileId) => {
+      try {
+        return sanitizeBatchResult(await window.browserAPI.launchBrowser(profileId));
+      } catch {
+        return sanitizeBatchResult(null);
+      }
+    }, (completed, total) => {
+      launchButton.textContent = `启动中 ${completed}/${total}`;
+    });
+    const statusSnapshot = profileState.getSnapshot();
+    const updatedRunningIds = new Set(statusSnapshot.runningIds);
+    results.forEach((result, index) => {
+      if (result.success) updatedRunningIds.add(toLaunch[index]);
+    });
+    profileState.setStatuses({
+      runningIds: updatedRunningIds,
+      unknownIds: statusSnapshot.unknownIds,
+      retryableCloseIds: statusSnapshot.retryableCloseIds,
+    });
+    await refreshProfilesAfterSuccessfulLaunch(results);
 
-  // Clear selection after launch
-  profileState.clearSelection();
-  renderProfiles();
-  showBatchResult('启动', results);
+    profileState.clearSelection();
+    renderProfiles();
+    showBatchResult('启动', results);
+  } finally {
+    toLaunch.forEach((profileId) => busyProfiles.delete(profileId));
+    launchButton.innerHTML = '启动选中 (<span id="selectedCount">0</span>)';
+    updateVisibleStatusCards();
+  }
+}
+
+document.getElementById('launchSelectedBtn').addEventListener('click', () => {
+  void pageBatchCoordinator.run(performSelectedLaunch).catch(() => {
+    showToast('批量启动失败，请重试', 'error');
+  });
 });
 
 // Close selected profiles
-document.getElementById('closeSelectedBtn').addEventListener('click', async () => {
+async function performSelectedClose() {
   const snapshot = profileState.getSnapshot();
   const selectedProfiles = new Set(snapshot.selectedIds);
   const runningBrowsers = new Set(snapshot.runningIds);
@@ -1117,41 +1138,46 @@ document.getElementById('closeSelectedBtn').addEventListener('click', async () =
   }
 
   const closeButton = document.getElementById('closeSelectedBtn');
-  closeButton.disabled = true;
   toClose.forEach((profileId) => busyProfiles.add(profileId));
   updateVisibleStatusCards();
-  const results = await mapWithConcurrency(toClose, 4, async (profileId) => {
-    let result;
-    try {
-      result = await window.browserAPI.closeBrowser(profileId);
-    } catch (error) {
-      result = { success: false, error: error.message };
-    }
-    return result;
-  }, (completed, total) => {
-    closeButton.textContent = `关闭中 ${completed}/${total}`;
-  });
-  toClose.forEach((profileId) => busyProfiles.delete(profileId));
-  closeButton.disabled = false;
-  closeButton.innerHTML = '关闭选中 (<span id="closeSelectedCount">0</span>)';
-  const statusSnapshot = profileState.getSnapshot();
-  const runningIds = new Set(statusSnapshot.runningIds);
-  const unknownIds = new Set(statusSnapshot.unknownIds);
-  const retryableCloseIds = new Set(statusSnapshot.retryableCloseIds);
-  results.forEach((result, index) => {
-    if (!result.success) return;
-    const profileId = toClose[index];
-    runningIds.delete(profileId);
-    unknownIds.delete(profileId);
-    retryableCloseIds.delete(profileId);
-  });
-  profileState.setStatuses({ runningIds, unknownIds, retryableCloseIds });
-  await refreshAllStatuses().catch(() => {});
+  try {
+    const results = await mapWithConcurrency(toClose, 4, async (profileId) => {
+      try {
+        return sanitizeBatchResult(await window.browserAPI.closeBrowser(profileId));
+      } catch {
+        return sanitizeBatchResult(null);
+      }
+    }, (completed, total) => {
+      closeButton.textContent = `关闭中 ${completed}/${total}`;
+    });
+    const statusSnapshot = profileState.getSnapshot();
+    const runningIds = new Set(statusSnapshot.runningIds);
+    const unknownIds = new Set(statusSnapshot.unknownIds);
+    const retryableCloseIds = new Set(statusSnapshot.retryableCloseIds);
+    results.forEach((result, index) => {
+      if (!result.success) return;
+      const profileId = toClose[index];
+      runningIds.delete(profileId);
+      unknownIds.delete(profileId);
+      retryableCloseIds.delete(profileId);
+    });
+    profileState.setStatuses({ runningIds, unknownIds, retryableCloseIds });
+    await refreshAllStatuses().catch(() => {});
 
-  // Clear selection after close
-  profileState.clearSelection();
-  renderProfiles();
-  showBatchResult('关闭', results);
+    profileState.clearSelection();
+    renderProfiles();
+    showBatchResult('关闭', results);
+  } finally {
+    toClose.forEach((profileId) => busyProfiles.delete(profileId));
+    closeButton.innerHTML = '关闭选中 (<span id="closeSelectedCount">0</span>)';
+    updateVisibleStatusCards();
+  }
+}
+
+document.getElementById('closeSelectedBtn').addEventListener('click', () => {
+  void pageBatchCoordinator.run(performSelectedClose).catch(() => {
+    showToast('批量关闭失败，请重试', 'error');
+  });
 });
 
 function showBatchResult(action, results) {
@@ -1322,8 +1348,8 @@ function updateCloseSelectedButton() {
 }
 
 // Initialize
-void loadProfiles().catch((error) => {
-  showToast(`加载配置失败：${error.message}`, 'error');
+void loadProfiles().catch(() => {
+  showToast('加载配置失败，请重试', 'error');
 });
 
 window.browserAPI.onBrowserStatusesChanged(() => {
@@ -1441,14 +1467,14 @@ document.getElementById('workspaceFilters').addEventListener('click', (event) =>
 });
 
 document.getElementById('launchWorkspaceBtn').addEventListener('click', () => {
-  void runWorkspaceBatch('launch').catch((error) => {
-    showToast(`工作区启动失败：${error?.message || '请求失败'}`, 'error');
+  void runWorkspaceBatch('launch').catch(() => {
+    showToast('工作区启动失败，请重试', 'error');
   });
 });
 
 document.getElementById('closeWorkspaceBtn').addEventListener('click', () => {
-  void runWorkspaceBatch('close').catch((error) => {
-    showToast(`工作区关闭失败：${error?.message || '请求失败'}`, 'error');
+  void runWorkspaceBatch('close').catch(() => {
+    showToast('工作区关闭失败，请重试', 'error');
   });
 });
 
@@ -1497,8 +1523,8 @@ document.getElementById('workspaceForm').addEventListener('submit', async (event
     renderWorkspaceModalList();
     renderProfiles();
     showToast(`已新建工作区“${result.workspace.name}”`, 'success');
-  } catch (error) {
-    showToast(`新建工作区失败：${error?.message || '请求失败'}`, 'error');
+  } catch {
+    showToast('新建工作区失败，请重试', 'error');
   } finally {
     submit.disabled = false;
   }
@@ -1538,8 +1564,8 @@ document.getElementById('workspaceRenameForm').addEventListener('submit', async 
     renderWorkspaceModalList();
     renderProfiles();
     showToast(`工作区已重命名为“${result.workspace.name}”`, 'success');
-  } catch (error) {
-    showToast(`重命名工作区失败：${error?.message || '请求失败'}`, 'error');
+  } catch {
+    showToast('重命名工作区失败，请重试', 'error');
   } finally {
     submit.disabled = false;
   }
@@ -1571,8 +1597,8 @@ document.getElementById('confirmWorkspaceDelete').addEventListener('click', asyn
     renderWorkspaceModalList();
     renderProfiles();
     showToast('工作区已删除，配置已保留为未分组', 'success');
-  } catch (error) {
-    showToast(`删除工作区失败：${error?.message || '请求失败'}`, 'error');
+  } catch {
+    showToast('删除工作区失败，请重试', 'error');
   } finally {
     confirmButton.disabled = false;
   }
@@ -1616,8 +1642,8 @@ document.getElementById('exportProfilesBtn')?.addEventListener('click', async ()
     const result = await window.browserAPI.exportProfiles();
     if (result.success) showToast(`已导出 ${result.count} 个配置`, 'success');
     else if (!result.canceled) showToast(`导出失败：${result.error}`, 'error');
-  } catch (error) {
-    showToast(`导出失败：${error.message}`, 'error');
+  } catch {
+    showToast('导出失败，请重试', 'error');
   }
 });
 

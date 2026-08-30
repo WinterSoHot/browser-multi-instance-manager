@@ -46,6 +46,9 @@ function createStore(snapshot) {
     getWrites() {
       return structuredClone(writes);
     },
+    getData() {
+      return structuredClone(data);
+    },
     get(key, fallback) {
       return key in data ? structuredClone(data[key]) : fallback;
     },
@@ -149,6 +152,93 @@ test('adapter rejects malformed nested records without writing', () => {
     assert.throws(() => createAppStore(store), /Invalid app store data/);
     assert.deepEqual(store.getWrites(), []);
   }
+});
+
+test('adapter rejects inconsistent workspace collections in legacy and current snapshots without writing', () => {
+  const workspace = {
+    id: 'workspace-1',
+    name: 'Café',
+    createdAt: '2026-08-30T00:00:00.000Z',
+  };
+  const invalidCollections = [
+    {
+      profiles: [legacyProfile],
+      workspaces: [workspace, { ...workspace, name: 'Other' }],
+    },
+    {
+      profiles: [legacyProfile],
+      workspaces: [workspace, {
+        ...workspace,
+        id: 'workspace-2',
+        name: 'CAFE\u0301',
+      }],
+    },
+    {
+      profiles: [legacyProfile],
+      workspaces: [{ ...workspace, name: ' Café' }],
+    },
+    {
+      profiles: [legacyProfile],
+      workspaces: [{ ...workspace, name: 'x'.repeat(81) }],
+    },
+    {
+      profiles: [{ ...legacyProfile, workspaceId: 'missing-workspace' }],
+      workspaces: [workspace],
+    },
+    {
+      profiles: [legacyProfile, { ...legacyProfile, name: 'Other' }],
+      workspaces: [workspace],
+    },
+  ];
+
+  for (const collections of invalidCollections) {
+    for (const schemaVersion of [undefined, CURRENT_SCHEMA_VERSION]) {
+      const snapshot = {
+        ...(schemaVersion === undefined ? {} : { schemaVersion }),
+        ...collections,
+        browserSettings: {},
+        runningBrowserProcesses: [],
+        appSettings: {},
+      };
+      const store = createStore(snapshot);
+
+      assert.throws(() => createAppStore(store), /Invalid app store data/u);
+      assert.deepEqual(store.getWrites(), []);
+      assert.deepEqual(store.getData(), snapshot);
+    }
+  }
+});
+
+test('runtime profile and workspace writes validate the complete collection before writing', () => {
+  const workspace = {
+    id: 'workspace-1',
+    name: 'Work',
+    createdAt: '2026-08-30T00:00:00.000Z',
+  };
+  const current = migrateStoreData({
+    profiles: [{ ...legacyProfile, workspaceId: 'workspace-1' }],
+    workspaces: [workspace],
+  });
+  const store = createStore(current);
+  const appStore = createAppStore(store);
+
+  assert.throws(
+    () => appStore.setWorkspaces([]),
+    /Invalid app store data/u,
+  );
+  assert.throws(
+    () => appStore.setProfiles([{ ...current.profiles[0], workspaceId: 'missing' }]),
+    /Invalid app store data/u,
+  );
+  assert.throws(
+    () => appStore.setProfilesAndWorkspaces(current.profiles, [
+      workspace,
+      { ...workspace, id: 'workspace-2', name: 'work' },
+    ]),
+    /Invalid app store data/u,
+  );
+  assert.deepEqual(store.getData(), current);
+  assert.deepEqual(store.getWrites(), []);
 });
 
 test('adapter rejects unsupported future schema versions without writing', () => {

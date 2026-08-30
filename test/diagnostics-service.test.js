@@ -147,6 +147,46 @@ test('unknown or running process state forbids directory repair after a forced f
   }
 });
 
+test('direct repair revalidates the browser executable after confirming stopped', async () => {
+  for (const getBrowserExecutable of [() => '', () => executablePath]) {
+    const { appStore, calls } = createFixture({ browserExists: false, directoryExists: false });
+    const service = createDiagnosticsService({
+      appStore,
+      profileOperations: {
+        runMutation(profileId, operation) {
+          calls.mutations.push(profileId);
+          return operation();
+        },
+      },
+      browserProcessManager: {
+        async getStatus(profileId, options) {
+          calls.getStatus.push({ profileId, options });
+          return { running: false };
+        },
+      },
+      getBrowserExecutable,
+      getProfilesDir: () => profilesDir,
+      async pathExists(targetPath) {
+        calls.pathExists.push(targetPath);
+        return false;
+      },
+      createEmptyProfileDir: async () => {
+        assert.fail('invalid browser path must block directory creation');
+      },
+    });
+
+    assert.deepEqual(await service.repairMissingDirectory('profile-1'), {
+      success: false,
+      code: 'BROWSER_PATH_INVALID',
+    });
+    assert.deepEqual(calls.getStatus, [{
+      profileId: 'profile-1',
+      options: { force: true },
+    }]);
+    assert.deepEqual(calls.pathExists, getBrowserExecutable() ? [executablePath] : []);
+  }
+});
+
 test('repair refuses a profile whose stored path is outside the controlled profile directory', async () => {
   const { service, calls } = createFixture({
     profile: {
@@ -232,6 +272,7 @@ test('repair re-reads the profile, checks the missing directory again, and accep
     code: 'DIRECTORY_RECREATED',
   });
   assert.deepEqual(calls.pathExists, [
+    executablePath,
     profilePath(),
   ]);
   assert.deepEqual(calls.createDirectory, [{ browserType: 'chrome', profileName: 'Work' }]);
@@ -255,7 +296,7 @@ test('repair reports a stable failure when the directory appears after the pre-c
     browserProcessManager: { getStatus: async () => ({ running: false }) },
     getBrowserExecutable: () => executablePath,
     getProfilesDir: () => profilesDir,
-    pathExists: async () => false,
+    pathExists: async (targetPath) => targetPath === executablePath,
     createEmptyProfileDir: async () => {
       calls.createDirectory.push({ browserType: 'chrome', profileName: 'Work' });
       const error = new Error('already exists');
@@ -281,7 +322,7 @@ test('repair returns stable failures without raw filesystem errors', async () =>
     browserProcessManager: { getStatus: async () => ({ running: false }) },
     getBrowserExecutable: () => executablePath,
     getProfilesDir: () => profilesDir,
-    pathExists: async () => false,
+    pathExists: async (targetPath) => targetPath === executablePath,
     createEmptyProfileDir: async () => {
       throw new Error(`${path.resolve(path.sep, 'private', 'secret')} permission denied`);
     },

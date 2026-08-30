@@ -73,7 +73,7 @@ test('close workspace batch includes only running and retryable unknown targets 
   assert.deepEqual(closed, ['running', 'retryable']);
   assert.equal(result.summary.successCount, 0);
   assert.equal(result.summary.failureCount, 2);
-  assert.equal(result.summary.details, 'failed-running；另有 1 个错误');
+  assert.equal(result.summary.details, '请求失败；另有 1 个错误');
 });
 
 test('workspace batch runner rejects re-entry while the current batch is active', async () => {
@@ -87,6 +87,93 @@ test('workspace batch runner rejects re-entry while the current batch is active'
   assert.deepEqual(await runner(), { skipped: true });
   release();
   assert.deepEqual(await first, { success: true });
+});
+
+test('page batch coordinator blocks selected work during a workspace batch', async () => {
+  const busyChanges = [];
+  let releaseWorkspace;
+  const coordinator = workspaceBatch.createPageBatchCoordinator?.(
+    (busy) => busyChanges.push(busy),
+  );
+  const workspaceRun = coordinator.run(async () => {
+    await new Promise((resolve) => { releaseWorkspace = resolve; });
+    return { kind: 'workspace' };
+  });
+
+  assert.deepEqual(await coordinator.run(() => ({ kind: 'selected' })), {
+    skipped: true,
+    code: 'BATCH_ALREADY_RUNNING',
+  });
+  releaseWorkspace();
+  assert.deepEqual(await workspaceRun, { kind: 'workspace' });
+  assert.deepEqual(busyChanges, [true, false]);
+});
+
+test('page batch coordinator blocks workspace work during a selected batch and restores after failure', async () => {
+  const busyChanges = [];
+  let releaseSelected;
+  const coordinator = workspaceBatch.createPageBatchCoordinator?.(
+    (busy) => busyChanges.push(busy),
+  );
+  const selectedRun = coordinator.run(async () => {
+    await new Promise((resolve) => { releaseSelected = resolve; });
+    throw new Error('selected failed');
+  });
+
+  assert.deepEqual(await coordinator.run(() => ({ kind: 'workspace' })), {
+    skipped: true,
+    code: 'BATCH_ALREADY_RUNNING',
+  });
+  releaseSelected();
+  await assert.rejects(selectedRun, /selected failed/u);
+  assert.deepEqual(busyChanges, [true, false]);
+  assert.deepEqual(await coordinator.run(() => ({ kind: 'workspace' })), {
+    kind: 'workspace',
+  });
+  assert.deepEqual(busyChanges, [true, false, true, false]);
+});
+
+test('launch metadata warnings remain successful batch outcomes', async () => {
+  const result = await workspaceBatch.executeWorkspaceBatch?.({
+    action: 'launch',
+    profiles: [profile('warning')],
+    getBrowserStatuses: () => ({ warning: { running: false } }),
+    launchBrowser: async () => ({
+      success: true,
+      pid: 42,
+      warningCode: 'LAST_LAUNCHED_AT_NOT_RECORDED',
+    }),
+    closeBrowser: () => assert.fail('close must not run for launch'),
+  });
+
+  assert.equal(result.summary.successCount, 1);
+  assert.equal(result.summary.failureCount, 0);
+});
+
+test('workspace batch replaces rejected and resolved raw errors with fixed messages', async () => {
+  const secrets = ['/Users/secret/profile', 'C:\\Users\\secret\\browser.exe'];
+  const result = await workspaceBatch.executeWorkspaceBatch?.({
+    action: 'launch',
+    profiles: [profile('rejected'), profile('resolved')],
+    getBrowserStatuses: () => ({
+      rejected: { running: false },
+      resolved: { running: false },
+    }),
+    launchBrowser: async (profileId) => {
+      if (profileId === 'rejected') throw new Error(secrets[0]);
+      return { success: false, error: secrets[1], pid: 991 };
+    },
+    closeBrowser: () => assert.fail('close must not run for launch'),
+  });
+
+  assert.deepEqual(result.results, [
+    { success: false, code: 'BATCH_OPERATION_FAILED', error: '请求失败' },
+    { success: false, code: 'BATCH_OPERATION_FAILED', error: '请求失败' },
+  ]);
+  assert.equal(result.summary.details, '请求失败；另有 1 个错误');
+  const serialized = JSON.stringify(result);
+  secrets.forEach((secret) => assert.equal(serialized.includes(secret), false));
+  assert.equal(serialized.includes('991'), false);
 });
 
 test('workspace batch fails closed when its forced snapshot cannot be read', async () => {

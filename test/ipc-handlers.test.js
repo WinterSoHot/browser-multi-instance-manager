@@ -109,7 +109,7 @@ function createHandlerFixture({
   return { handlers, unregister };
 }
 
-test('registers each existing IPC channel once and unregisters cleanly', () => {
+test('registers each existing IPC channel once and unregisters cleanly', async () => {
   const { handlers, unregister } = createHandlerFixture({
     profileService: {
       list: () => [{ id: 'profile-1' }],
@@ -117,7 +117,7 @@ test('registers each existing IPC channel once and unregisters cleanly', () => {
   });
 
   assert.deepEqual([...handlers.keys()], expectedChannels);
-  assert.deepEqual(handlers.get('get-profiles')({}, undefined), [{ id: 'profile-1' }]);
+  assert.deepEqual(await handlers.get('get-profiles')({}, undefined), [{ id: 'profile-1' }]);
 
   unregister();
 
@@ -156,9 +156,9 @@ test('diagnostics IPC accepts only a profile ID and never forwards service excep
     { method: 'inspect', profileId: 'profile-1' },
     { method: 'repair', profileId: 'profile-1' },
   ]);
-  assert.throws(
-    () => handlers.get('inspect-profile-diagnostics')({}, ''),
-    /Invalid profile ID/,
+  assert.deepEqual(
+    await handlers.get('inspect-profile-diagnostics')({}, ''),
+    { code: 'DIAGNOSTICS_UNAVAILABLE', state: 'process-unknown', actions: ['retry'] },
   );
 
   const failures = createHandlerFixture({
@@ -197,6 +197,98 @@ test('profile IPC delegates the original payload and forwards the service result
   assert.equal(result, serviceResult);
 });
 
+test('IPC sanitizes unexpected profile, process, workspace, and settings failures', async () => {
+  const secrets = ['/Users/secret/profile', 'C:\\Users\\secret\\browser.exe'];
+  const { handlers } = createHandlerFixture({
+    profileService: {
+      list: () => { throw new Error(secrets[0]); },
+      add: () => Promise.reject(secrets[1]),
+    },
+    browserProcessManager: {
+      close: () => ({ success: false, error: secrets[0], pid: 991 }),
+      getStatuses: () => Promise.reject({ command: secrets[1] }),
+    },
+    workspaceService: {
+      list: () => { throw secrets[1]; },
+    },
+    settingsService: {
+      set: () => ({ success: false, error: secrets[0] }),
+      getEnvironment: () => Promise.reject(null),
+    },
+  });
+
+  const results = [
+    await handlers.get('get-profiles')(),
+    await handlers.get('add-profile')({}, { browserType: 'chrome', profileName: 'Work' }),
+    await handlers.get('close-browser')({}, 'profile-1'),
+    await handlers.get('get-browser-statuses')({}, ['profile-1']),
+    await handlers.get('get-workspaces')(),
+    await handlers.get('set-browser-settings')({}, {}),
+    await handlers.get('get-browser-environment')(),
+  ];
+
+  assert.deepEqual(results, [
+    [],
+    { success: false, code: 'PROFILE_REQUEST_FAILED', error: 'Profile request failed' },
+    { success: false, code: 'PROCESS_REQUEST_FAILED', error: 'Process request failed' },
+    { 'profile-1': { running: false, verificationUnavailable: true } },
+    [],
+    { success: false, code: 'SETTINGS_REQUEST_FAILED', error: 'Settings request failed' },
+    { platform: 'unknown', settings: {}, defaultPaths: {}, validity: {} },
+  ]);
+  const serialized = JSON.stringify(results);
+  secrets.forEach((secret) => assert.equal(serialized.includes(secret), false));
+  assert.equal(serialized.includes('991'), false);
+});
+
+test('IPC strips PID and command fields even from otherwise known process failures', async () => {
+  const { handlers } = createHandlerFixture({
+    browserProcessManager: {
+      close: () => ({
+        success: false,
+        error: 'Browser not running',
+        pid: 991,
+        command: 'C:\\Users\\secret\\browser.exe --profile secret',
+      }),
+    },
+  });
+
+  assert.deepEqual(await handlers.get('close-browser')({}, 'profile-1'), {
+    success: false,
+    code: 'BROWSER_NOT_RUNNING',
+    error: 'Browser not running',
+  });
+});
+
+test('IPC does not trust error text paired with a known code or process success extras', async () => {
+  const secretPath = 'C:\\Users\\secret\\browser.exe';
+  const { handlers } = createHandlerFixture({
+    profileService: {
+      add: () => ({
+        success: false,
+        code: 'PROFILE_ADD_FAILED',
+        error: secretPath,
+      }),
+    },
+    browserProcessManager: {
+      close: () => ({
+        success: true,
+        pid: 991,
+        command: `${secretPath} --profile secret`,
+      }),
+    },
+  });
+
+  assert.deepEqual(await handlers.get('add-profile')({}, {}), {
+    success: false,
+    code: 'PROFILE_ADD_FAILED',
+    error: 'Unable to add profile',
+  });
+  assert.deepEqual(await handlers.get('close-browser')({}, 'profile-1'), {
+    success: true,
+  });
+});
+
 test('process IPC validates bulk IDs and forwards optional forced snapshots', async () => {
   const statusCalls = [];
   const { handlers } = createHandlerFixture({
@@ -218,11 +310,11 @@ test('process IPC validates bulk IDs and forwards optional forced snapshots', as
   );
   assert.deepEqual(
     await handlers.get('get-browser-statuses')({}, ['profile-3'], { force: true }),
-    { 'profile-1': { running: true } },
+    { 'profile-3': { running: false, verificationUnavailable: true } },
   );
-  assert.throws(
-    () => handlers.get('get-browser-statuses')({}, ['profile-4'], { force: 'true' }),
-    /Invalid browser status options/,
+  assert.deepEqual(
+    await handlers.get('get-browser-statuses')({}, ['profile-4'], { force: 'true' }),
+    { 'profile-4': { running: false, verificationUnavailable: true } },
   );
   assert.deepEqual(
     await handlers.get('refresh-browser-status')({}, 'profile-2'),

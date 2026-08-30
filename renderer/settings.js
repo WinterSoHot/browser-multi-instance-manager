@@ -84,8 +84,8 @@ function renderBrowserSettings() {
         if (result.success && result.path) {
           document.getElementById(`path-${browserType}`).value = result.path;
         }
-      } catch (error) {
-        alert(`选择路径失败：${error.message}`);
+      } catch {
+        alert('选择路径失败，请重试');
       } finally {
         btn.disabled = false;
       }
@@ -124,8 +124,8 @@ document.getElementById('saveSettings').addEventListener('click', async () => {
 
     alert('设置已保存');
     await loadSettings();
-  } catch (error) {
-    alert(`保存设置失败：${error.message}`);
+  } catch {
+    alert('保存设置失败，请重试');
   } finally {
     setSettingsBusy(false);
   }
@@ -146,8 +146,8 @@ document.getElementById('resetSettings').addEventListener('click', async () => {
     }
     await loadSettings();
     alert('已重置为默认路径');
-  } catch (error) {
-    alert(`重置设置失败：${error.message}`);
+  } catch {
+    alert('重置设置失败，请重试');
   } finally {
     setSettingsBusy(false);
   }
@@ -159,6 +159,6 @@ document.getElementById('backToHome').addEventListener('click', () => {
 });
 
 // Initialize
-void loadSettings().catch((error) => {
-  document.getElementById('browserSettingsList').innerHTML = `<p class="path-status invalid">加载失败：${escapeHtml(error.message)}</p>`;
+void loadSettings().catch(() => {
+  document.getElementById('browserSettingsList').innerHTML = '<p class="path-status invalid">加载失败，请重试</p>';
 });

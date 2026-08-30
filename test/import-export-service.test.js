@@ -9,16 +9,26 @@ try {
   // The first TDD run intentionally exercises the missing service.
 }
 
+const profilesRoot = path.resolve('test-fixtures', 'profiles');
+const profilePath = (browserType, profileName) => (
+  path.join(profilesRoot, browserType, profileName)
+);
+
 function createFixture({
   profiles = [],
   failCreateAt = null,
+  failCreateCode = null,
   createFailureLeavesPath = false,
+  existingPaths: additionalExistingPaths = [],
   throwSetProfilesAt = null,
   now = () => 0,
   maxPreviewTokens,
 } = {}) {
   let storedProfiles = structuredClone(profiles);
-  const existingPaths = new Set(profiles.map((profile) => profile.path).filter(Boolean));
+  const existingPaths = new Set([
+    ...profiles.map((profile) => profile.path).filter(Boolean),
+    ...additionalExistingPaths,
+  ]);
   const createdDirectories = [];
   const removedDirectories = [];
   let createCalls = 0;
@@ -33,14 +43,20 @@ function createFixture({
       },
     },
     profileOperations: { runGlobalMutation: (operation) => operation() },
-    getProfilePath: (browserType, profileName) => path.join('/profiles', browserType, profileName),
-    pathExists: async (targetPath) => existingPaths.has(targetPath),
-    createProfileDir: async (browserType, profileName) => {
+    getProfilePath: profilePath,
+    createEmptyProfileDir: async (browserType, profileName) => {
       createCalls += 1;
-      const targetPath = path.join('/profiles', browserType, profileName);
+      const targetPath = profilePath(browserType, profileName);
       if (createCalls === failCreateAt) {
         if (createFailureLeavesPath) existingPaths.add(targetPath);
-        throw new Error('unavailable directory');
+        const error = new Error('unavailable directory');
+        if (failCreateCode) error.code = failCreateCode;
+        throw error;
+      }
+      if (existingPaths.has(targetPath)) {
+        const error = new Error('directory already exists');
+        error.code = 'EEXIST';
+        throw error;
       }
       existingPaths.add(targetPath);
       createdDirectories.push(targetPath);
@@ -62,12 +78,13 @@ function createFixture({
     },
     createdDirectories,
     removedDirectories,
+    hasDirectory: (targetPath) => existingPaths.has(targetPath),
   };
 }
 
 test('preview classifies every row without filesystem or store side effects', async () => {
   const fixture = createFixture({
-    profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work', path: '/profiles/chrome/Work' }],
+    profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work', path: profilePath('chrome', 'Work') }],
   });
   const before = fixture.profiles();
 
@@ -91,7 +108,7 @@ test('preview classifies every row without filesystem or store side effects', as
 
 test('execute applies skip and sequential auto-rename decisions without importing metadata fields', async () => {
   const fixture = createFixture({
-    profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work', path: '/profiles/chrome/Work' }],
+    profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work', path: profilePath('chrome', 'Work') }],
   });
   const preview = await fixture.service?.previewImport({
     version: 1,
@@ -124,9 +141,9 @@ test('execute applies skip and sequential auto-rename decisions without importin
     { browserType: 'firefox', name: 'Personal', workspaceId: undefined, favorite: undefined, lastLaunchedAt: undefined },
   ]);
   assert.deepEqual(fixture.createdDirectories, [
-    '/profiles/chrome/Work 副本',
-    '/profiles/chrome/work 副本 (2)',
-    '/profiles/firefox/Personal',
+    profilePath('chrome', 'Work 副本'),
+    profilePath('chrome', 'work 副本 (2)'),
+    profilePath('firefox', 'Personal'),
   ]);
 });
 
@@ -137,7 +154,12 @@ test('execute uses the current profiles snapshot and rejects a preview made stal
     profiles: [{ browserType: 'chrome', name: 'Personal' }],
   });
   const profiles = fixture.profiles();
-  profiles.push({ id: 'racer', browserType: 'chrome', name: 'Personal', path: '/profiles/chrome/Personal' });
+  profiles.push({
+    id: 'racer',
+    browserType: 'chrome',
+    name: 'Personal',
+    path: profilePath('chrome', 'Personal'),
+  });
   fixture.setProfiles(profiles);
   const racedResult = await fixture.service?.executeImport({ token: preview?.token, decisions: [] });
 
@@ -155,7 +177,10 @@ test('a later stale row prevents every directory creation in a multi-row import'
     ],
   });
   fixture.setProfiles([{
-    id: 'racer', browserType: 'firefox', name: 'Projects', path: '/profiles/firefox/Projects',
+    id: 'racer',
+    browserType: 'firefox',
+    name: 'Projects',
+    path: profilePath('firefox', 'Projects'),
   }]);
 
   assert.deepEqual(
@@ -168,7 +193,7 @@ test('a later stale row prevents every directory creation in a multi-row import'
 
 test('duplicate decisions must exactly match the duplicate rows stored with the preview token', async () => {
   const fixture = createFixture({
-    profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work', path: '/profiles/chrome/Work' }],
+    profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work', path: profilePath('chrome', 'Work') }],
   });
   const preview = await fixture.service?.previewImport({
     version: 1,
@@ -197,7 +222,7 @@ test('skip remains a skip and rename remains a clone when a previewed duplicate 
     ['rename', ['Work 副本']],
   ]) {
     const fixture = createFixture({
-      profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work', path: '/profiles/chrome/Work' }],
+      profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work', path: profilePath('chrome', 'Work') }],
     });
     const preview = await fixture.service?.previewImport({
       version: 1,
@@ -215,7 +240,7 @@ test('skip remains a skip and rename remains a clone when a previewed duplicate 
 
 test('execute rolls back profile records and only new empty directories when a directory creation fails', async () => {
   const fixture = createFixture({
-    profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work', path: '/profiles/chrome/Work' }],
+    profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work', path: profilePath('chrome', 'Work') }],
     failCreateAt: 2,
   });
   const before = fixture.profiles();
@@ -231,7 +256,46 @@ test('execute rolls back profile records and only new empty directories when a d
 
   assert.deepEqual(result, { success: false, code: 'IMPORT_EXECUTION_FAILED' });
   assert.deepEqual(fixture.profiles(), before);
-  assert.deepEqual(fixture.removedDirectories, ['/profiles/firefox/Personal']);
+  assert.deepEqual(fixture.removedDirectories, [profilePath('firefox', 'Personal')]);
+});
+
+test('an EEXIST race rolls back only earlier exclusively created directories', async () => {
+  const fixture = createFixture({
+    failCreateAt: 2,
+    failCreateCode: 'EEXIST',
+    createFailureLeavesPath: true,
+  });
+  const racedPath = profilePath('edge', 'Projects');
+  const preview = await fixture.service?.previewImport({
+    version: 1,
+    profiles: [
+      { browserType: 'firefox', name: 'Personal' },
+      { browserType: 'edge', name: 'Projects' },
+    ],
+  });
+
+  assert.deepEqual(
+    await fixture.service?.executeImport({ token: preview?.token, decisions: [] }),
+    { success: false, code: 'IMPORT_DIRECTORY_CONFLICT' },
+  );
+  assert.deepEqual(fixture.removedDirectories, [profilePath('firefox', 'Personal')]);
+  assert.equal(fixture.hasDirectory(racedPath), true);
+});
+
+test('an existing orphan directory is never adopted or removed by import', async () => {
+  const existingPath = profilePath('firefox', 'Personal');
+  const fixture = createFixture({ existingPaths: [existingPath] });
+  const preview = await fixture.service?.previewImport({
+    version: 1,
+    profiles: [{ browserType: 'firefox', name: 'Personal' }],
+  });
+
+  assert.deepEqual(
+    await fixture.service?.executeImport({ token: preview?.token, decisions: [] }),
+    { success: false, code: 'IMPORT_DIRECTORY_CONFLICT' },
+  );
+  assert.deepEqual(fixture.removedDirectories, []);
+  assert.equal(fixture.hasDirectory(existingPath), true);
 });
 
 test('rollback never removes a directory from a failed creation attempt', async () => {
@@ -262,7 +326,7 @@ test('rollback continues cleaning batch directories when restoring the profile s
     await fixture.service?.executeImport({ token: preview?.token, decisions: [] }),
     { success: false, code: 'IMPORT_ROLLBACK_INCOMPLETE' },
   );
-  assert.deepEqual(fixture.removedDirectories, ['/profiles/firefox/Personal']);
+  assert.deepEqual(fixture.removedDirectories, [profilePath('firefox', 'Personal')]);
 });
 
 test('preview tokens expire, have a hard capacity, bind normalized metadata, and cannot be replayed', async () => {
