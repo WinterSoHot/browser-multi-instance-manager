@@ -9,6 +9,7 @@ const {
   validateAppSettingsPatch,
   validateUpdateCheckCache,
 } = require('../lib/app-store');
+const { createUpdateChecker } = require('../lib/update-checker');
 
 const legacyProfile = {
   id: 'work-profile',
@@ -57,6 +58,30 @@ function createStore(snapshot) {
     },
     set(key, value) {
       data[key] = structuredClone(value);
+    },
+  };
+}
+
+function createRawStore(snapshot) {
+  const writes = [];
+  let data = snapshot;
+  return {
+    get store() {
+      return data;
+    },
+    set store(value) {
+      const safeValue = structuredClone(value);
+      writes.push(safeValue);
+      data = safeValue;
+    },
+    get(key, fallback) {
+      return Object.hasOwn(data, key) ? structuredClone(data[key]) : fallback;
+    },
+    set(key, value) {
+      data[key] = structuredClone(value);
+    },
+    getWrites() {
+      return structuredClone(writes);
     },
   };
 }
@@ -178,10 +203,6 @@ test('adapter rejects malformed present collections and settings without writing
     { ...legacyData, appSettings: [] },
     { ...legacyData, appSettings: { closeToTray: 'yes' } },
     { ...legacyData, appSettings: { unknown: true } },
-    { ...legacyData, updateCheckCache: { checkedAt: -1, checkedVersion: '1.3.1', result: { status: 'current' } } },
-    { ...legacyData, updateCheckCache: { checkedAt: 1, checkedVersion: 'v1.3.1', result: { status: 'current' } } },
-    { ...legacyData, updateCheckCache: { checkedAt: 1, checkedVersion: '1.3.1', result: { status: 'current', extra: true } } },
-    { ...legacyData, updateCheckCache: { checkedAt: 1, checkedVersion: '1.3.1', result: { status: 'available', version: '1.4.0', releaseUrl: 'https://evil.example' } } },
   ];
 
   for (const snapshot of invalidSnapshots) {
@@ -190,6 +211,87 @@ test('adapter rejects malformed present collections and settings without writing
     assert.throws(() => createAppStore(store), /Invalid app store data/);
     assert.deepEqual(store.getWrites(), []);
   }
+});
+
+test('adapter drops malformed persisted update-check cache, writes null, and lets the checker recheck', async () => {
+  const malformedCache = {
+    checkedAt: 1,
+    checkedVersion: '1.3.1',
+    result: { status: 'current', extra: true },
+  };
+  const store = createStore({ ...legacyData, updateCheckCache: malformedCache });
+  const appStore = createAppStore(store);
+  let requestCalls = 0;
+  const checker = createUpdateChecker({
+    currentVersion: '1.3.1',
+    now: () => 1_000,
+    cache: {
+      get: () => appStore.getUpdateCheckCache(),
+      set: (cache) => appStore.setUpdateCheckCache(cache),
+    },
+    requestLatestRelease: async () => {
+      requestCalls += 1;
+      return {
+        tag_name: 'v1.4.0',
+        html_url: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0',
+        draft: false,
+        prerelease: false,
+      };
+    },
+  });
+
+  assert.equal(appStore.getUpdateCheckCache(), null);
+  assert.equal(store.getWrites().length, 1);
+  assert.equal(store.getWrites()[0].updateCheckCache, null);
+  assert.deepEqual(await checker.check({ force: false }), {
+    status: 'available',
+    version: '1.4.0',
+    releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0',
+  });
+  assert.equal(requestCalls, 1);
+});
+
+test('adapter drops accessor and proxy persisted caches without executing their traps', () => {
+  const accessorSnapshot = migrateStoreData(legacyData);
+  let getterCalls = 0;
+  Object.defineProperty(accessorSnapshot, 'updateCheckCache', {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return { checkedAt: 1, checkedVersion: '1.3.1', result: { status: 'current' } };
+    },
+  });
+  const accessorStore = createRawStore(accessorSnapshot);
+  const accessorAppStore = createAppStore(accessorStore);
+
+  let proxyTrapCalls = 0;
+  const proxyCache = new Proxy({
+    checkedAt: 1,
+    checkedVersion: '1.3.1',
+    result: { status: 'current' },
+  }, {
+    get() {
+      proxyTrapCalls += 1;
+      return undefined;
+    },
+    getPrototypeOf() {
+      proxyTrapCalls += 1;
+      return Object.prototype;
+    },
+    ownKeys() {
+      proxyTrapCalls += 1;
+      return [];
+    },
+  });
+  const proxyStore = createRawStore({ ...migrateStoreData(legacyData), updateCheckCache: proxyCache });
+  const proxyAppStore = createAppStore(proxyStore);
+
+  assert.equal(getterCalls, 0);
+  assert.equal(proxyTrapCalls, 0);
+  assert.equal(accessorAppStore.getUpdateCheckCache(), null);
+  assert.equal(proxyAppStore.getUpdateCheckCache(), null);
+  assert.equal(accessorStore.getWrites()[0].updateCheckCache, null);
+  assert.equal(proxyStore.getWrites()[0].updateCheckCache, null);
 });
 
 test('adapter rejects malformed nested records without writing', () => {
