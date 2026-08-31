@@ -260,7 +260,7 @@ test('a delayed closed event for an older window does not detach the newer activ
 });
 
 test('main selects the dedicated tray template asset', async () => {
-  const harness = await loadMain();
+  const harness = await loadMain({ platform: 'darwin' });
 
   assert.match(harness.iconPaths[0], /trayTemplate\.png$/u);
 });
