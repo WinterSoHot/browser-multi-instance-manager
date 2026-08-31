@@ -86,6 +86,37 @@ function createRawStore(snapshot) {
   };
 }
 
+function createSnapshotWriteFailingStore(snapshot, failures = 1) {
+  const writes = [];
+  let remainingFailures = failures;
+  let data = structuredClone(snapshot);
+  return {
+    get store() {
+      return structuredClone(data);
+    },
+    set store(value) {
+      if (remainingFailures > 0) {
+        remainingFailures -= 1;
+        throw new Error('Store is read-only');
+      }
+      data = structuredClone(value);
+      writes.push(structuredClone(value));
+    },
+    get(key, fallback) {
+      return key in data ? structuredClone(data[key]) : fallback;
+    },
+    set(key, value) {
+      data[key] = structuredClone(value);
+    },
+    getData() {
+      return structuredClone(data);
+    },
+    getWrites() {
+      return structuredClone(writes);
+    },
+  };
+}
+
 test('migrates legacy data without changing profile identity or paths', () => {
   const migrated = migrateStoreData({ profiles: [legacyProfile] });
   assert.equal(migrated.schemaVersion, CURRENT_SCHEMA_VERSION);
@@ -292,6 +323,79 @@ test('adapter drops accessor and proxy persisted caches without executing their 
   assert.equal(proxyAppStore.getUpdateCheckCache(), null);
   assert.equal(accessorStore.getWrites()[0].updateCheckCache, null);
   assert.equal(proxyStore.getWrites()[0].updateCheckCache, null);
+});
+
+test('adapter survives an optional cache-cleanup write failure with an in-memory cache miss', async () => {
+  const malformedCurrentSnapshot = {
+    ...migrateStoreData(legacyData),
+    updateCheckCache: {
+      checkedAt: 1,
+      checkedVersion: '1.3.1',
+      result: { status: 'current', extra: true },
+    },
+  };
+  const store = createSnapshotWriteFailingStore(malformedCurrentSnapshot);
+  const appStore = createAppStore(store);
+  let requestCalls = 0;
+  const checker = createUpdateChecker({
+    currentVersion: '1.3.1',
+    now: () => 1_000,
+    cache: {
+      get: () => appStore.getUpdateCheckCache(),
+      set: (cache) => appStore.setUpdateCheckCache(cache),
+    },
+    requestLatestRelease: async () => {
+      requestCalls += 1;
+      return {
+        tag_name: 'v1.4.0',
+        html_url: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0',
+        draft: false,
+        prerelease: false,
+      };
+    },
+  });
+
+  assert.equal(appStore.getUpdateCheckCache(), null);
+  appStore.setProfilesAndWorkspaces(appStore.getProfiles(), appStore.getWorkspaces());
+  assert.equal(store.getData().updateCheckCache, null);
+  assert.equal(store.getWrites().length, 1);
+  assert.deepEqual(await checker.check({ force: false }), {
+    status: 'available',
+    version: '1.4.0',
+    releaseUrl: 'https://github.com/WinterSoHot/browser-multi-instance-manager/releases/tag/v1.4.0',
+  });
+  assert.equal(requestCalls, 1);
+  assert.equal(appStore.getUpdateCheckCache().result.status, 'available');
+  assert.equal(store.getData().updateCheckCache.result.status, 'available');
+  assert.equal(store.getWrites().length, 1);
+});
+
+test('core migration write failures still prevent initialization after a cache cleanup miss', () => {
+  const store = createSnapshotWriteFailingStore({
+    ...legacyData,
+    updateCheckCache: {
+      checkedAt: 1,
+      checkedVersion: '1.3.1',
+      result: { status: 'current', extra: true },
+    },
+  });
+
+  assert.throws(() => createAppStore(store), /Store is read-only/u);
+  assert.deepEqual(store.getWrites(), []);
+});
+
+test('runtime cache writes still propagate storage failures', () => {
+  const store = createStore(migrateStoreData(legacyData));
+  const appStore = createAppStore(store);
+  store.set = () => {
+    throw new Error('Runtime write denied');
+  };
+
+  assert.throws(() => appStore.setUpdateCheckCache({
+    checkedAt: 1,
+    checkedVersion: '1.3.1',
+    result: { status: 'current' },
+  }), /Runtime write denied/u);
 });
 
 test('adapter rejects malformed nested records without writing', () => {
