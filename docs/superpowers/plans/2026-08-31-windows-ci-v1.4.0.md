@@ -96,7 +96,7 @@ git commit -m "修复 Windows 托盘资源测试"
 **Files:**
 - Modify: `package.json`
 - Modify: `package-lock.json`
-- Test: `test/workflow-contract.test.js`
+- Test: `test/workflow.test.js`
 
 **Interfaces:**
 - Consumes: `npm version <version> --no-git-tag-version` and the workflow contract requiring manifest equality.
@@ -130,7 +130,7 @@ Run:
 
 ```bash
 node -e "const pkg = require('./package.json'); const lock = require('./package-lock.json'); if (pkg.version !== '1.4.0' || lock.version !== '1.4.0' || lock.packages[''].version !== '1.4.0') process.exit(1)"
-node --test test/workflow-contract.test.js test/package-scripts.test.js
+node --test test/workflow.test.js test/package-scripts.test.js
 npm test
 git diff --check
 ```
