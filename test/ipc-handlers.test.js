@@ -718,6 +718,31 @@ test('batch mutation and selected export IPC expose only stable failure results'
   }
 });
 
+test('batch mutation IPC does not let dependency results impersonate parse failures', async () => {
+  const { handlers } = createHandlerFixture({
+    workspaceService: {
+      assignMany: () => ({ success: false, code: 'BATCH_PROFILE_REQUEST_INVALID' }),
+    },
+  });
+
+  assert.deepEqual(await handlers.get('assign-profiles-workspace')({}, {
+    profileIds: ['p1'],
+    workspaceId: null,
+  }), { success: false, code: 'BATCH_PROFILE_UPDATE_FAILED' });
+});
+
+test('selected export IPC does not let dependency results impersonate parse failures', async () => {
+  const { handlers } = createHandlerFixture({
+    profileService: {
+      exportMetadata: () => ({ success: false, code: 'BATCH_PROFILE_REQUEST_INVALID' }),
+    },
+  });
+
+  assert.deepEqual(await handlers.get('export-selected-profiles')({}, {
+    profileIds: ['p1'],
+  }), { success: false, code: 'PROFILE_EXPORT_FAILED' });
+});
+
 test('workspace IPC returns a safe result when an asynchronous service operation rejects', async () => {
   const { handlers } = createHandlerFixture({
     workspaceService: {
