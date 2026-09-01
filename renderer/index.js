@@ -24,6 +24,8 @@ const {
 const {
   createBatchMenuState,
   createProfileBatchOrganizer,
+  getOrganizationActionFocusTarget,
+  getOrganizationWorkspaceTargets,
   nextMenuItemIndex,
 } = window.profileBatchOrganizer;
 const batchMenuState = createBatchMenuState();
@@ -1393,10 +1395,7 @@ function updateSelectedActionButtons() {
 
 function renderOrganizationWorkspaceMenu() {
   const organizeWorkspaceMenu = document.getElementById('organizeWorkspaceMenu');
-  const targets = [
-    { id: '', name: '未分组' },
-    ...workspaces,
-  ];
+  const targets = getOrganizationWorkspaceTargets(workspaces);
   const buttons = targets.map((workspace) => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -1436,16 +1435,44 @@ function toggleOrganizationWorkspaceMenu() {
   }
 }
 
-async function runOrganizationAction(action, value) {
+function isOrganizationFocusTargetAvailable(target) {
+  return Boolean(target && !target.disabled && !target.hidden && !target.closest('[hidden]'));
+}
+
+function focusOrganizationActionTarget(activationType, pending) {
+  const trigger = document.getElementById('organizeSelectedBtn');
+  const fallback = document.getElementById('selectAllBtn');
+  const targetType = getOrganizationActionFocusTarget({
+    activationType,
+    pending,
+    triggerAvailable: isOrganizationFocusTargetAvailable(trigger),
+  });
+  const target = targetType === 'trigger' ? trigger : fallback;
+  if (targetType && isOrganizationFocusTargetAvailable(target)) target.focus();
+}
+
+function getOrganizationActivationType(event) {
+  return event.detail === 0 ? 'keyboard' : 'pointer';
+}
+
+async function runOrganizationAction(action, value, activationType = 'pointer') {
   const profileIds = profileState.getSnapshot().selectedIds;
   if (profileIds.length === 0) return;
+  let operation;
+  if (action === 'workspace') {
+    operation = () => batchOrganizer.assignWorkspace(profileIds, value);
+  } else if (action === 'favorite') {
+    operation = () => batchOrganizer.setFavorite(profileIds, true);
+  } else if (action === 'unfavorite') {
+    operation = () => batchOrganizer.setFavorite(profileIds, false);
+  } else if (action === 'export') {
+    operation = () => batchOrganizer.exportSelected(profileIds);
+  } else return;
+
   closeOrganizationMenu(false);
-  let result;
-  if (action === 'workspace') result = await batchOrganizer.assignWorkspace(profileIds, value);
-  else if (action === 'favorite') result = await batchOrganizer.setFavorite(profileIds, true);
-  else if (action === 'unfavorite') result = await batchOrganizer.setFavorite(profileIds, false);
-  else if (action === 'export') result = await batchOrganizer.exportSelected(profileIds);
-  else return;
+  const resultPromise = operation();
+  focusOrganizationActionTarget(activationType, true);
+  const result = await resultPromise;
 
   if (result?.canceled) showToast(result.message, 'info');
   else if (result?.success && result.refreshFailed) {
@@ -1453,6 +1480,7 @@ async function runOrganizationAction(action, value) {
   } else if (result?.success) showToast(result.message, 'success');
   else showToast('批量整理失败，请重试', 'error');
   updateSelectedActionButtons();
+  focusOrganizationActionTarget(activationType, false);
 }
 
 function handleOrganizationMenuKeydown(event) {
@@ -1509,10 +1537,11 @@ organizeSelectedBtn.addEventListener('keydown', (event) => {
 
 organizeSelectedMenu.addEventListener('keydown', handleOrganizationMenuKeydown);
 organizeSelectedMenu.addEventListener('click', (event) => {
+  const activationType = getOrganizationActivationType(event);
   const workspaceTarget = event.target.closest('[data-organize-workspace-id]');
   if (workspaceTarget && organizeSelectedMenu.contains(workspaceTarget)) {
     const workspaceId = workspaceTarget.getAttribute('data-organize-workspace-id');
-    void runOrganizationAction('workspace', workspaceId || null);
+    void runOrganizationAction('workspace', workspaceId || null, activationType);
     return;
   }
   const actionTarget = event.target.closest('[data-organize-action]');
@@ -1522,7 +1551,7 @@ organizeSelectedMenu.addEventListener('click', (event) => {
     toggleOrganizationWorkspaceMenu();
     return;
   }
-  void runOrganizationAction(action);
+  void runOrganizationAction(action, undefined, activationType);
 });
 
 document.addEventListener('pointerdown', (event) => {

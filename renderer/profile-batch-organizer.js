@@ -48,6 +48,27 @@
     return null;
   }
 
+  function getOrganizationActionFocusTarget({
+    activationType,
+    pending,
+    triggerAvailable,
+  }) {
+    if (activationType !== 'keyboard') return null;
+    if (pending || !triggerAvailable) return 'fallback';
+    return 'trigger';
+  }
+
+  function getOrganizationWorkspaceTargets(workspaces) {
+    const availableWorkspaces = Array.isArray(workspaces) ? workspaces : [];
+    return [
+      { id: '', name: '未分组' },
+      ...availableWorkspaces.map((workspace) => ({
+        id: String(workspace.id),
+        name: String(workspace.name),
+      })),
+    ];
+  }
+
   function normalizeMutationResult(result, requestedIds) {
     if (result?.success !== true) {
       return { success: false, code: safeFailureCode(result?.code, mutationFailureCodes) };
@@ -161,6 +182,7 @@
     };
   }
 
-  return { createBatchMenuState, nextMenuItemIndex, normalizeMutationResult,
-    formatMutationSummary, createProfileBatchOrganizer };
+  return { createBatchMenuState, nextMenuItemIndex, getOrganizationActionFocusTarget,
+    getOrganizationWorkspaceTargets, normalizeMutationResult, formatMutationSummary,
+    createProfileBatchOrganizer };
 }));

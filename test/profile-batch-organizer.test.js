@@ -23,6 +23,43 @@ test('menu focus navigation wraps and supports Home and End', () => {
   assert.equal(organizer.nextMenuItemIndex(1, 'Escape', 3), null);
 });
 
+test('keyboard organization actions use a stable fallback while pending and restore an available trigger', () => {
+  assert.equal(organizer.getOrganizationActionFocusTarget({
+    activationType: 'keyboard',
+    pending: true,
+    triggerAvailable: true,
+  }), 'fallback');
+  assert.equal(organizer.getOrganizationActionFocusTarget({
+    activationType: 'keyboard',
+    pending: false,
+    triggerAvailable: true,
+  }), 'trigger');
+  assert.equal(organizer.getOrganizationActionFocusTarget({
+    activationType: 'keyboard',
+    pending: false,
+    triggerAvailable: false,
+  }), 'fallback');
+});
+
+test('pointer organization actions never request a programmatic focus move', () => {
+  assert.equal(organizer.getOrganizationActionFocusTarget({
+    activationType: 'pointer',
+    pending: false,
+    triggerAvailable: true,
+  }), null);
+});
+
+test('workspace organization menu retains every target in a many-workspace list', () => {
+  const workspaces = Array.from({ length: 200 }, (_, index) => ({
+    id: `workspace-${index + 1}`,
+    name: `Workspace ${index + 1}`,
+  }));
+  const targets = organizer.getOrganizationWorkspaceTargets(workspaces);
+  assert.equal(targets.length, 201);
+  assert.deepEqual(targets[0], { id: '', name: '未分组' });
+  assert.deepEqual(targets[200], { id: 'workspace-200', name: 'Workspace 200' });
+});
+
 test('mutation results keep only disjoint requested ID buckets', () => {
   assert.deepEqual(organizer.normalizeMutationResult({
     success: true,
