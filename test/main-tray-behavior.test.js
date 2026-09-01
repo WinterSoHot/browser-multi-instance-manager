@@ -31,6 +31,7 @@ async function loadMain({
   profiles = [],
   platform = process.platform,
   showError = null,
+  throwOnDestroyedWebContents = false,
   appSettings = { closeToTray: true, checkUpdatesOnStartup: true },
   updateResult = { status: 'current' },
 } = {}) {
@@ -58,9 +59,16 @@ async function loadMain({
       this.showCalls = 0;
       this.focusCalls = 0;
       windows.push(this);
-      this.webContents = new EventEmitter();
-      this.webContents.send = (channel, payload) => sent.push({ channel, payload });
-      this.webContents.mainFrame = { url: homePageUrl };
+      this._webContents = new EventEmitter();
+      this._webContents.send = (channel, payload) => sent.push({ channel, payload });
+      this._webContents.mainFrame = { url: homePageUrl };
+    }
+
+    get webContents() {
+      if (this.destroyed && throwOnDestroyedWebContents) {
+        throw new TypeError('Object has been destroyed');
+      }
+      return this._webContents;
     }
 
     loadFile() {}
@@ -240,6 +248,16 @@ test('main drops a closed window reference and opens exit confirmation without a
   assert.equal(harness.dialogCalls.length, 1);
   assert.equal(harness.dialogCalls[0].length, 1);
   assert.equal(harness.dialogCalls[0][0].type, 'warning');
+});
+
+test('closed cleanup does not read webContents from a destroyed window', async () => {
+  const harness = await loadMain({ throwOnDestroyedWebContents: true });
+  const window = harness.windows[0];
+  await harness.ipcHandlers.get('update-page-ready')(homeReadyEvent(window));
+
+  window.detachWithoutClosedEvent();
+
+  assert.doesNotThrow(() => window.emitClosed());
 });
 
 test('a delayed closed event for an older window does not detach the newer active window', async () => {

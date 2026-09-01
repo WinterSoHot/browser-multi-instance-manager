@@ -290,11 +290,12 @@ function createWindow() {
       sandbox: true,
     },
   });
+  const webContents = window.webContents;
 
   mainWindow = window;
   window.loadFile(path.join(__dirname, "renderer", "index.html"));
-  if (typeof window.webContents.once === "function") {
-    window.webContents.once("did-finish-load", () => {
+  if (typeof webContents.once === "function") {
+    webContents.once("did-finish-load", () => {
       if (automaticUpdateCheckStarted) return;
       automaticUpdateCheckStarted = true;
       let enabled = false;
@@ -312,11 +313,11 @@ function createWindow() {
       }).catch(() => {});
     });
   }
-  window.webContents.on?.("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
+  webContents.on?.("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
     if (isMainFrame !== true) return;
     updateHomeNavigationGeneration += 1;
-    if (updateHomeContext?.webContents === window.webContents) updateHomeContext = null;
-    if (deliveredAutomaticUpdate?.webContents === window.webContents) {
+    if (updateHomeContext?.webContents === webContents) updateHomeContext = null;
+    if (deliveredAutomaticUpdate?.webContents === webContents) {
       deliveredAutomaticUpdate = null;
     }
   });
@@ -324,8 +325,8 @@ function createWindow() {
     void appLifecycle.handleWindowClose(event);
   });
   window.on("closed", () => {
-    if (updateHomeContext?.webContents === window.webContents) updateHomeContext = null;
-    if (deliveredAutomaticUpdate?.webContents === window.webContents) {
+    if (updateHomeContext?.webContents === webContents) updateHomeContext = null;
+    if (deliveredAutomaticUpdate?.webContents === webContents) {
       deliveredAutomaticUpdate = null;
     }
     if (mainWindow === window) mainWindow = undefined;
