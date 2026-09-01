@@ -78,6 +78,20 @@
           </label>
           <button id="launchSelectedBtn" class="btn btn-success" style="display: none;">启动选中 (<span id="selectedCount">0</span>)</button>
           <button id="closeSelectedBtn" class="btn btn-danger" style="display: none;">关闭选中 (<span id="closeSelectedCount">0</span>)</button>
+          <div id="organizeSelectedGroup" class="batch-organize" hidden>
+            <button id="organizeSelectedBtn" class="btn btn-secondary" type="button"
+              aria-haspopup="menu" aria-expanded="false">
+              整理选中（0）
+            </button>
+            <div id="organizeSelectedMenu" class="batch-organize-menu" role="menu" hidden>
+              <button type="button" role="menuitem" data-organize-action="workspace"
+                aria-haspopup="menu" aria-expanded="false">移动到工作区</button>
+              <div id="organizeWorkspaceMenu" class="batch-organize-submenu" role="menu" hidden></div>
+              <button type="button" role="menuitem" data-organize-action="favorite">收藏选中</button>
+              <button type="button" role="menuitem" data-organize-action="unfavorite">取消收藏</button>
+              <button type="button" role="menuitem" data-organize-action="export">导出选中</button>
+            </div>
+          </div>
           <button id="selectAllBtn" class="btn btn-secondary btn-small">全选</button>
           <button id="importProfilesBtn" class="btn btn-secondary btn-small">导入</button>
           <button id="exportProfilesBtn" class="btn btn-secondary btn-small">导出</button>
@@ -227,6 +241,7 @@
   <script src="view-utils.js"></script>
   <script src="profile-state.js"></script>
   <script src="workspace-batch.js"></script>
+  <script src="profile-batch-organizer.js"></script>
   <script src="import-preview.js"></script>
   <script src="diagnostics-view.js"></script>
   <script src="update-ui-controller.js"></script>

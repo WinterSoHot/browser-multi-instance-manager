@@ -22,6 +22,12 @@ const {
   sanitizeBatchResult,
 } = window.workspaceBatch;
 const {
+  createBatchMenuState,
+  createProfileBatchOrganizer,
+  nextMenuItemIndex,
+} = window.profileBatchOrganizer;
+const batchMenuState = createBatchMenuState();
+const {
   buildImportDecisions,
   createImportPreviewState,
   hasValidImportToken,
@@ -42,6 +48,7 @@ let statusCheckInterval = null;
 let statusRefreshTimer = null;
 let currentViewMode = 'list'; // 'list' or 'grid'
 let workspaces = [];
+let organizationWorkspaceMenuOpen = false;
 const importPreviewState = createImportPreviewState();
 const diagnosticsViewState = createDiagnosticsViewState();
 let diagnosticsModalProfileId = null;
@@ -57,13 +64,27 @@ function setPageBatchBusy(busy) {
     'closeWorkspaceBtn',
     'launchSelectedBtn',
     'closeSelectedBtn',
+    'organizeSelectedBtn',
   ].forEach((buttonId) => {
     const button = document.getElementById(buttonId);
     if (button) button.disabled = busy;
   });
+  batchMenuState.setBusy(busy);
+  if (busy) organizationWorkspaceMenuOpen = false;
+  updateOrganizeSelectedButton();
 }
 
 const pageBatchCoordinator = createPageBatchCoordinator(setPageBatchBusy);
+const batchOrganizer = createProfileBatchOrganizer({
+  runBatch: (operation) => pageBatchCoordinator.run(operation),
+  assignProfilesWorkspace: (...args) => window.browserAPI.assignProfilesWorkspace(...args),
+  setProfilesFavorite: (...args) => window.browserAPI.setProfilesFavorite(...args),
+  exportSelectedProfiles: (...args) => window.browserAPI.exportSelectedProfiles(...args),
+  reloadProfiles: async () => {
+    profileState.setProfiles(await window.browserAPI.getProfiles());
+    renderProfiles();
+  },
+});
 
 const diagnosticMessages = {
   'process-unknown': '无法确认该配置关联的浏览器进程。请重新检测后再进行目录操作。',
@@ -282,8 +303,7 @@ function renderProfiles() {
     const hasActiveFilter = filter !== 'all' || query !== '';
     profilesList.innerHTML = `<p class="empty-message">${hasActiveFilter ? '没有找到匹配的配置' : '暂无配置，请点击上方按钮添加'}</p>`;
     updateSelectAllButton();
-    updateLaunchSelectedButton();
-    updateCloseSelectedButton();
+    updateSelectedActionButtons();
     return;
   }
 
@@ -324,8 +344,7 @@ function renderProfiles() {
   `}).join('');
 
   updateSelectAllButton();
-  updateLaunchSelectedButton();
-  updateCloseSelectedButton();
+  updateSelectedActionButtons();
 }
 
 function renderWorkspaceSidebar() {
@@ -718,8 +737,7 @@ function updateVisibleStatusCards() {
       statusContainer.innerHTML = getStatusMarkup(profile, statusMembership);
     }
   });
-  updateLaunchSelectedButton();
-  updateCloseSelectedButton();
+  updateSelectedActionButtons();
 }
 
 // Get browser icon SVG
@@ -1226,8 +1244,7 @@ function toggleSelectVisibleProfiles() {
   }
 
   updateSelectAllButton();
-  updateLaunchSelectedButton();
-  updateCloseSelectedButton();
+  updateSelectedActionButtons();
 }
 
 // Keyboard shortcuts for bulk actions
@@ -1282,8 +1299,7 @@ function toggleProfileSelection(profileId) {
   }
 
   updateSelectAllButton();
-  updateLaunchSelectedButton();
-  updateCloseSelectedButton();
+  updateSelectedActionButtons();
 }
 
 // Update select all button text
@@ -1346,6 +1362,174 @@ function updateCloseSelectedButton() {
     }
   }
 }
+
+function updateOrganizeSelectedButton() {
+  const organizeSelectedGroup = document.getElementById('organizeSelectedGroup');
+  const organizeSelectedBtn = document.getElementById('organizeSelectedBtn');
+  const organizeSelectedMenu = document.getElementById('organizeSelectedMenu');
+  const organizeWorkspaceMenu = document.getElementById('organizeWorkspaceMenu');
+  const workspaceAction = organizeSelectedMenu?.querySelector('[data-organize-action="workspace"]');
+  if (!organizeSelectedGroup || !organizeSelectedBtn || !organizeSelectedMenu
+    || !organizeWorkspaceMenu || !workspaceAction) return;
+
+  const count = profileState.getSnapshot().selectedIds.length;
+  batchMenuState.setSelectedCount(count);
+  const state = batchMenuState.getSnapshot();
+  if (!state.open) organizationWorkspaceMenuOpen = false;
+  organizeSelectedGroup.hidden = !state.visible;
+  organizeSelectedBtn.disabled = state.busy;
+  organizeSelectedBtn.textContent = state.busy ? '处理中…' : `整理选中（${state.count}）`;
+  organizeSelectedBtn.setAttribute('aria-expanded', String(state.open));
+  organizeSelectedMenu.hidden = !state.open;
+  workspaceAction.setAttribute('aria-expanded', String(organizationWorkspaceMenuOpen));
+  organizeWorkspaceMenu.hidden = !state.open || !organizationWorkspaceMenuOpen;
+}
+
+function updateSelectedActionButtons() {
+  updateLaunchSelectedButton();
+  updateCloseSelectedButton();
+  updateOrganizeSelectedButton();
+}
+
+function renderOrganizationWorkspaceMenu() {
+  const organizeWorkspaceMenu = document.getElementById('organizeWorkspaceMenu');
+  const targets = [
+    { id: '', name: '未分组' },
+    ...workspaces,
+  ];
+  const buttons = targets.map((workspace) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('role', 'menuitem');
+    button.setAttribute('data-organize-workspace-id', String(workspace.id));
+    button.textContent = String(workspace.name);
+    return button;
+  });
+  organizeWorkspaceMenu.replaceChildren(...buttons);
+}
+
+function getEnabledOrganizationMenuItems(menu) {
+  return Array.from(menu.querySelectorAll(':scope > [role="menuitem"]'))
+    .filter((item) => !item.disabled && !item.hidden);
+}
+
+function focusOrganizationMenuEdge(menu, edge = 'first') {
+  const items = getEnabledOrganizationMenuItems(menu);
+  const target = edge === 'last' ? items.at(-1) : items[0];
+  target?.focus();
+}
+
+function closeOrganizationMenu(restoreFocus = true) {
+  const wasOpen = batchMenuState.getSnapshot().open;
+  batchMenuState.close();
+  organizationWorkspaceMenuOpen = false;
+  updateOrganizeSelectedButton();
+  if (restoreFocus && wasOpen) document.getElementById('organizeSelectedBtn').focus();
+}
+
+function toggleOrganizationWorkspaceMenu() {
+  organizationWorkspaceMenuOpen = !organizationWorkspaceMenuOpen;
+  if (organizationWorkspaceMenuOpen) renderOrganizationWorkspaceMenu();
+  updateOrganizeSelectedButton();
+  if (organizationWorkspaceMenuOpen) {
+    focusOrganizationMenuEdge(document.getElementById('organizeWorkspaceMenu'));
+  }
+}
+
+async function runOrganizationAction(action, value) {
+  const profileIds = profileState.getSnapshot().selectedIds;
+  if (profileIds.length === 0) return;
+  closeOrganizationMenu(false);
+  let result;
+  if (action === 'workspace') result = await batchOrganizer.assignWorkspace(profileIds, value);
+  else if (action === 'favorite') result = await batchOrganizer.setFavorite(profileIds, true);
+  else if (action === 'unfavorite') result = await batchOrganizer.setFavorite(profileIds, false);
+  else if (action === 'export') result = await batchOrganizer.exportSelected(profileIds);
+  else return;
+
+  if (result?.canceled) showToast(result.message, 'info');
+  else if (result?.success && result.refreshFailed) {
+    showToast('整理完成，但刷新配置列表失败', 'warning');
+  } else if (result?.success) showToast(result.message, 'success');
+  else showToast('批量整理失败，请重试', 'error');
+  updateSelectedActionButtons();
+}
+
+function handleOrganizationMenuKeydown(event) {
+  const menuItem = event.target.closest('[role="menuitem"]');
+  if (!menuItem) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeOrganizationMenu();
+    return;
+  }
+
+  const workspaceAction = menuItem.matches('[data-organize-action="workspace"]');
+  const organizeWorkspaceMenu = document.getElementById('organizeWorkspaceMenu');
+  if (workspaceAction && event.key === 'ArrowRight') {
+    event.preventDefault();
+    if (!organizationWorkspaceMenuOpen) toggleOrganizationWorkspaceMenu();
+    else focusOrganizationMenuEdge(organizeWorkspaceMenu);
+    return;
+  }
+  if (organizeWorkspaceMenu.contains(menuItem) && event.key === 'ArrowLeft') {
+    event.preventDefault();
+    organizationWorkspaceMenuOpen = false;
+    updateOrganizeSelectedButton();
+    document.querySelector('[data-organize-action="workspace"]').focus();
+    return;
+  }
+
+  const activeMenu = menuItem.closest('[role="menu"]');
+  const items = getEnabledOrganizationMenuItems(activeMenu);
+  const nextIndex = nextMenuItemIndex(items.indexOf(menuItem), event.key, items.length);
+  if (nextIndex === null) return;
+  event.preventDefault();
+  items[nextIndex].focus();
+}
+
+const organizeSelectedGroup = document.getElementById('organizeSelectedGroup');
+const organizeSelectedBtn = document.getElementById('organizeSelectedBtn');
+const organizeSelectedMenu = document.getElementById('organizeSelectedMenu');
+
+organizeSelectedBtn.addEventListener('click', () => {
+  batchMenuState.toggle();
+  if (!batchMenuState.getSnapshot().open) organizationWorkspaceMenuOpen = false;
+  updateOrganizeSelectedButton();
+  if (batchMenuState.getSnapshot().open) focusOrganizationMenuEdge(organizeSelectedMenu);
+});
+
+organizeSelectedBtn.addEventListener('keydown', (event) => {
+  if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+  event.preventDefault();
+  if (!batchMenuState.getSnapshot().open) batchMenuState.toggle();
+  updateOrganizeSelectedButton();
+  focusOrganizationMenuEdge(organizeSelectedMenu, event.key === 'ArrowUp' ? 'last' : 'first');
+});
+
+organizeSelectedMenu.addEventListener('keydown', handleOrganizationMenuKeydown);
+organizeSelectedMenu.addEventListener('click', (event) => {
+  const workspaceTarget = event.target.closest('[data-organize-workspace-id]');
+  if (workspaceTarget && organizeSelectedMenu.contains(workspaceTarget)) {
+    const workspaceId = workspaceTarget.getAttribute('data-organize-workspace-id');
+    void runOrganizationAction('workspace', workspaceId || null);
+    return;
+  }
+  const actionTarget = event.target.closest('[data-organize-action]');
+  if (!actionTarget || !organizeSelectedMenu.contains(actionTarget)) return;
+  const action = actionTarget.dataset.organizeAction;
+  if (action === 'workspace') {
+    toggleOrganizationWorkspaceMenu();
+    return;
+  }
+  void runOrganizationAction(action);
+});
+
+document.addEventListener('pointerdown', (event) => {
+  if (batchMenuState.getSnapshot().open && !organizeSelectedGroup.contains(event.target)) {
+    closeOrganizationMenu(false);
+  }
+});
 
 // Initialize
 void loadProfiles().catch(() => {
