@@ -320,7 +320,7 @@ function renderProfiles() {
           <input type="checkbox" class="profile-checkbox" data-id="${escapeHtml(profile.id)}" ${isSelected ? 'checked' : ''}>
           <span class="checkbox-custom"></span>
         </label>
-        <h3>${escapeHtml(profile.name)}</h3>
+        <h3 title="${escapeHtml(profile.name)}">${escapeHtml(profile.name)}</h3>
         <span class="browser-type">
           ${getBrowserIcon(profile.browserType)}
           ${escapeHtml(profile.browserType)}
