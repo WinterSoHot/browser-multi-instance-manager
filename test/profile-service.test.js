@@ -38,6 +38,7 @@ function createServiceFixture({
   const openPathCalls = [];
   const launches = [];
   const exportedFiles = [];
+  const saveDialogCalls = [];
   const existing = new Set(existingPaths);
   const profileOperations = {
     runGlobalMutation: (operation) => operation(),
@@ -82,7 +83,10 @@ function createServiceFixture({
       openPathCalls.push(targetPath);
       return '';
     },
-    showSaveDialog: async () => saveDialogResult,
+    showSaveDialog: async (options) => {
+      saveDialogCalls.push(options);
+      return saveDialogResult;
+    },
     showOpenDialog: async () => openDialogResult,
     readImportFile: async () => JSON.stringify(importDocument),
     writeExportFile: async (filePath, content) => {
@@ -101,6 +105,7 @@ function createServiceFixture({
     openPathCalls,
     launches,
     exportedFiles,
+    saveDialogCalls,
   };
 }
 
@@ -575,6 +580,45 @@ test('export keeps only profile metadata and removes the legacy one-shot import 
   }]);
 
   assert.equal(fixture.service.importMetadata, undefined);
+});
+
+test('selected export resolves current profiles in store order and keeps minimal fields', async () => {
+  const fixture = createServiceFixture({
+    profiles: [
+      { id: 'p1', browserType: 'chrome', name: 'Work', path: '/private/p1', favorite: true },
+      { id: 'p2', browserType: 'firefox', name: 'Personal', path: '/private/p2' },
+      { id: 'p3', browserType: 'edge', name: 'Research', path: '/private/p3', workspaceId: 'w1' },
+    ],
+  });
+
+  assert.deepEqual(await fixture.service.exportMetadata(['p3', 'missing', 'p1', 'p3']), {
+    success: true,
+    count: 2,
+    skippedCount: 1,
+  });
+  assert.equal(fixture.exportedFiles[0].content, '{\n  "version": 1,\n  "profiles": [\n    {\n      "browserType": "chrome",\n      "name": "Work"\n    },\n    {\n      "browserType": "edge",\n      "name": "Research"\n    }\n  ]\n}\n');
+});
+
+test('selected export rejects an entirely stale selection before opening a dialog', async () => {
+  const fixture = createServiceFixture({ profiles: [] });
+  assert.deepEqual(await fixture.service.exportMetadata(['missing']), {
+    success: false,
+    code: 'PROFILE_EXPORT_EMPTY_SELECTION',
+    error: 'No profiles selected',
+  });
+  assert.equal(fixture.saveDialogCalls.length, 0);
+  assert.deepEqual(fixture.exportedFiles, []);
+});
+
+test('selected export cancellation preserves a stable canceled result', async () => {
+  const fixture = createServiceFixture({
+    profiles: [{ id: 'p1', browserType: 'chrome', name: 'Work' }],
+    saveDialogResult: { canceled: true },
+  });
+  assert.deepEqual(await fixture.service.exportMetadata(['p1']), {
+    success: false,
+    canceled: true,
+  });
 });
 
 test('previewImportMetadata owns the file dialog and bounded reader without exposing the selected path', async () => {
