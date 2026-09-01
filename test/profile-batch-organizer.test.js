@@ -136,3 +136,65 @@ test('organizer delegates re-entry rejection without invoking an API', async () 
   });
   assert.equal(apiCalls, 0);
 });
+
+test('mutation failure maps an unsafe dependency code to the stable batch failure code', async () => {
+  const batch = organizer.createProfileBatchOrganizer({
+    runBatch: async (operation) => operation(),
+    assignProfilesWorkspace: async () => ({
+      success: false,
+      code: '/Users/private/profile',
+    }),
+    setProfilesFavorite: async () => assert.fail('favorite must not run'),
+    exportSelectedProfiles: async () => assert.fail('export must not run'),
+    reloadProfiles: async () => assert.fail('failed mutation must not reload profiles'),
+  });
+  const result = await batch.assignWorkspace(['p1'], 'w1');
+  assert.deepEqual(result, { success: false, code: 'BATCH_ORGANIZATION_FAILED' });
+  assert.equal(JSON.stringify(result).includes('/Users/private/profile'), false);
+});
+
+test('export failure maps an unsafe dependency code to the stable batch failure code', async () => {
+  const batch = organizer.createProfileBatchOrganizer({
+    runBatch: async (operation) => operation(),
+    assignProfilesWorkspace: async () => assert.fail('workspace mutation must not run'),
+    setProfilesFavorite: async () => assert.fail('favorite must not run'),
+    exportSelectedProfiles: async () => ({
+      success: false,
+      code: '/Users/private/profile',
+    }),
+    reloadProfiles: async () => assert.fail('export must not reload profiles'),
+  });
+  const result = await batch.exportSelected(['p1']);
+  assert.deepEqual(result, { success: false, code: 'BATCH_ORGANIZATION_FAILED' });
+  assert.equal(JSON.stringify(result).includes('/Users/private/profile'), false);
+});
+
+test('mutation catches a rejecting batch coordinator without leaking its error', async () => {
+  let apiCalls = 0;
+  const batch = organizer.createProfileBatchOrganizer({
+    runBatch: async () => { throw new Error('/Users/private/profile'); },
+    assignProfilesWorkspace: async () => { apiCalls += 1; },
+    setProfilesFavorite: async () => assert.fail('favorite must not run'),
+    exportSelectedProfiles: async () => assert.fail('export must not run'),
+    reloadProfiles: async () => assert.fail('failed batch must not reload profiles'),
+  });
+  const result = await batch.assignWorkspace(['p1'], 'w1');
+  assert.deepEqual(result, { success: false, code: 'BATCH_ORGANIZATION_FAILED' });
+  assert.equal(JSON.stringify(result).includes('/Users/private/profile'), false);
+  assert.equal(apiCalls, 0);
+});
+
+test('export catches a rejecting batch coordinator without leaking its error', async () => {
+  let apiCalls = 0;
+  const batch = organizer.createProfileBatchOrganizer({
+    runBatch: async () => { throw new Error('/Users/private/profile'); },
+    assignProfilesWorkspace: async () => assert.fail('workspace mutation must not run'),
+    setProfilesFavorite: async () => assert.fail('favorite must not run'),
+    exportSelectedProfiles: async () => { apiCalls += 1; },
+    reloadProfiles: async () => assert.fail('export must not reload profiles'),
+  });
+  const result = await batch.exportSelected(['p1']);
+  assert.deepEqual(result, { success: false, code: 'BATCH_ORGANIZATION_FAILED' });
+  assert.equal(JSON.stringify(result).includes('/Users/private/profile'), false);
+  assert.equal(apiCalls, 0);
+});

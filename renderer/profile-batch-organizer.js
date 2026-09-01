@@ -3,6 +3,21 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.profileBatchOrganizer = api;
 }(typeof globalThis !== 'undefined' ? globalThis : this, () => {
+  const mutationFailureCodes = new Set([
+    'BATCH_PROFILE_REQUEST_INVALID',
+    'BATCH_PROFILE_UPDATE_FAILED',
+    'WORKSPACE_NOT_FOUND',
+  ]);
+  const exportFailureCodes = new Set([
+    'BATCH_PROFILE_REQUEST_INVALID',
+    'PROFILE_EXPORT_EMPTY_SELECTION',
+    'PROFILE_EXPORT_FAILED',
+  ]);
+
+  function safeFailureCode(code, allowedCodes) {
+    return allowedCodes.has(code) ? code : 'BATCH_ORGANIZATION_FAILED';
+  }
+
   function createBatchMenuState() {
     let count = 0;
     let open = false;
@@ -35,7 +50,7 @@
 
   function normalizeMutationResult(result, requestedIds) {
     if (result?.success !== true) {
-      return { success: false, code: result?.code || 'BATCH_ORGANIZATION_FAILED' };
+      return { success: false, code: safeFailureCode(result?.code, mutationFailureCodes) };
     }
     const requested = new Set(requestedIds);
     const used = new Set();
@@ -72,8 +87,16 @@
     exportSelectedProfiles,
     reloadProfiles,
   }) {
+    async function runSafely(operation) {
+      try {
+        return await runBatch(operation);
+      } catch {
+        return { success: false, code: 'BATCH_ORGANIZATION_FAILED' };
+      }
+    }
+
     async function runMutation(profileIds, operation) {
-      return runBatch(async () => {
+      return runSafely(async () => {
         let rawResult;
         try {
           rawResult = await operation();
@@ -110,7 +133,7 @@
         );
       },
       exportSelected(profileIds) {
-        return runBatch(async () => {
+        return runSafely(async () => {
           let result;
           try {
             result = await exportSelectedProfiles(profileIds);
@@ -125,7 +148,7 @@
             || result.count < 1
             || !Number.isSafeInteger(result.skippedCount)
             || result.skippedCount < 0) {
-            return { success: false, code: result?.code || 'BATCH_ORGANIZATION_FAILED' };
+            return { success: false, code: safeFailureCode(result?.code, exportFailureCodes) };
           }
           return {
             success: true,
