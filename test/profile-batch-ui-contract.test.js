@@ -7,6 +7,14 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'
 const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.js'), 'utf8');
 const styles = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
 
+function getCssRuleDeclarations(css, selector, requiredDeclaration) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const matches = css.matchAll(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, 'gu'));
+  const match = Array.from(matches).find((candidate) => candidate[1].includes(requiredDeclaration));
+  assert.ok(match, `missing CSS rule for ${selector} with ${requiredDeclaration}`);
+  return match[1];
+}
+
 test('home page includes an accessible selected-profile organization menu', () => {
   assert.match(html, /id="organizeSelectedBtn"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"/u);
   assert.match(html, /id="organizeSelectedMenu"[^>]*role="menu"[^>]*hidden/u);
@@ -25,8 +33,16 @@ test('batch organizer module loads before the home-page entry point', () => {
 });
 
 test('many workspace targets remain reachable in viewport-bounded scrolling menus', () => {
-  assert.match(styles, /\.batch-organize-menu,\s*\.batch-organize-submenu\s*\{[^}]*max-height:\s*calc\(100vh - 32px\);[^}]*overflow-y:\s*auto;/su);
-  assert.match(styles, /@media \(max-width: 768px\)[\s\S]*?\.batch-organize-submenu\s*\{[^}]*max-height:[^;}]+;[^}]*overflow-y:\s*auto;/u);
+  const desktopMenu = getCssRuleDeclarations(styles, '.batch-organize-menu', 'top: calc(100% + 6px)');
+  const desktopSubmenu = getCssRuleDeclarations(styles, '.batch-organize-submenu', 'top: 6px');
+  const mobileStyles = styles.slice(styles.indexOf('@media (max-width: 768px)'));
+  const mobileMenu = getCssRuleDeclarations(mobileStyles, '.batch-organize-menu', 'max-height');
+  const mobileSubmenu = getCssRuleDeclarations(mobileStyles, '.batch-organize-submenu', 'position: static');
+  assert.match(desktopMenu, /overflow:\s*visible;/u);
+  assert.doesNotMatch(desktopMenu, /overflow-y:\s*auto;/u);
+  assert.match(desktopSubmenu, /max-height:\s*calc\(100vh - 32px\);[\s\S]*overflow-y:\s*auto;/u);
+  assert.match(mobileMenu, /max-height:\s*calc\(100vh - 32px\);[\s\S]*overflow-y:\s*auto;/u);
+  assert.match(mobileSubmenu, /max-height:[^;}]+;[\s\S]*overflow-y:\s*auto;/u);
   assert.match(source, /getOrganizationWorkspaceTargets\(workspaces\)/u);
   assert.match(source, /organizeWorkspaceMenu\.replaceChildren\(\.\.\.buttons\)/u);
 });
