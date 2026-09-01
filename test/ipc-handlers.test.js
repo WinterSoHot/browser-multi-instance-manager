@@ -22,6 +22,7 @@ const expectedChannels = [
   'clone-profile',
   'get-profile-size',
   'export-profiles',
+  'export-selected-profiles',
   'preview-import',
   'execute-import',
   'get-browser-settings',
@@ -40,7 +41,9 @@ const expectedChannels = [
   'rename-workspace',
   'delete-workspace',
   'assign-profile-workspace',
+  'assign-profiles-workspace',
   'set-profile-favorite',
+  'set-profiles-favorite',
   'inspect-profile-diagnostics',
   'repair-profile-directory',
 ];
@@ -115,7 +118,9 @@ function createHandlerFixture({
       rename: () => {},
       remove: () => {},
       assign: () => {},
+      assignMany: () => {},
       setFavorite: () => {},
+      setFavoriteMany: () => {},
       ...workspaceOverrides,
     },
     diagnosticsService: {
@@ -555,6 +560,162 @@ test('workspace IPC delegates narrow payloads and rejects invalid identifiers or
     await handlers.get('set-profile-favorite')({}, { profileId: 'profile-1', favorite: 'true' }),
     { success: false, error: 'Invalid favorite value' },
   );
+});
+
+test('batch organization IPC validates exact payloads and delegates deduplicated IDs', async () => {
+  const calls = [];
+  const { handlers } = createHandlerFixture({
+    workspaceService: {
+      assignMany: (payload) => {
+        calls.push({ method: 'assignMany', payload });
+        return { success: true, updatedIds: ['p1'], unchangedIds: [], skippedIds: [] };
+      },
+      setFavoriteMany: (payload) => {
+        calls.push({ method: 'setFavoriteMany', payload });
+        return { success: true, updatedIds: ['p1'], unchangedIds: [], skippedIds: [] };
+      },
+    },
+    profileService: {
+      exportMetadata: (profileIds) => {
+        calls.push({ method: 'exportMetadata', payload: profileIds });
+        return { success: true, count: 1, skippedCount: 0 };
+      },
+    },
+  });
+
+  assert.deepEqual(await handlers.get('assign-profiles-workspace')({}, {
+    profileIds: ['p1', 'p1'],
+    workspaceId: null,
+  }), { success: true, updatedIds: ['p1'], unchangedIds: [], skippedIds: [] });
+  assert.deepEqual(await handlers.get('set-profiles-favorite')({}, {
+    profileIds: ['p1'],
+    favorite: true,
+  }), { success: true, updatedIds: ['p1'], unchangedIds: [], skippedIds: [] });
+  assert.deepEqual(await handlers.get('export-selected-profiles')({}, {
+    profileIds: ['p1'],
+  }), { success: true, count: 1, skippedCount: 0 });
+  assert.deepEqual(calls, [
+    { method: 'assignMany', payload: { profileIds: ['p1'], workspaceId: null } },
+    { method: 'setFavoriteMany', payload: { profileIds: ['p1'], favorite: true } },
+    { method: 'exportMetadata', payload: ['p1'] },
+  ]);
+});
+
+test('batch organization IPC rejects extra keys and sanitizes dependency failures', async () => {
+  const secret = '/Users/private/profile';
+  const { handlers } = createHandlerFixture({
+    workspaceService: {
+      assignMany: async () => { throw new Error(secret); },
+    },
+  });
+  assert.deepEqual(await handlers.get('assign-profiles-workspace')({}, {
+    profileIds: ['p1'],
+    workspaceId: null,
+    extra: true,
+  }), { success: false, code: 'BATCH_PROFILE_REQUEST_INVALID' });
+  const failed = await handlers.get('assign-profiles-workspace')({}, {
+    profileIds: ['p1'],
+    workspaceId: null,
+  });
+  assert.deepEqual(failed, { success: false, code: 'BATCH_PROFILE_UPDATE_FAILED' });
+  assert.equal(JSON.stringify(failed).includes(secret), false);
+});
+
+test('batch organization IPC rejects non-exact records without executing accessors or proxies', async () => {
+  let getterReads = 0;
+  const accessorPayload = {};
+  Object.defineProperties(accessorPayload, {
+    profileIds: {
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        return ['p1'];
+      },
+    },
+    workspaceId: { enumerable: true, value: null },
+  });
+  let proxyTraps = 0;
+  const proxyPayload = new Proxy({ profileIds: ['p1'], workspaceId: null }, {
+    get() { proxyTraps += 1; },
+    getOwnPropertyDescriptor() { proxyTraps += 1; },
+    getPrototypeOf() { proxyTraps += 1; },
+    ownKeys() { proxyTraps += 1; },
+  });
+  const inheritedPayload = Object.assign(Object.create({ extra: true }), {
+    profileIds: ['p1'],
+    workspaceId: null,
+  });
+  const symbolPayload = { profileIds: ['p1'], workspaceId: null };
+  symbolPayload[Symbol('extra')] = true;
+  const { handlers } = createHandlerFixture();
+
+  for (const payload of [accessorPayload, inheritedPayload, symbolPayload]) {
+    assert.deepEqual(await handlers.get('assign-profiles-workspace')({}, payload), {
+      success: false,
+      code: 'BATCH_PROFILE_REQUEST_INVALID',
+    });
+  }
+  assert.deepEqual(await handlers.get('assign-profiles-workspace')({}, proxyPayload), {
+    success: false,
+    code: 'BATCH_PROFILE_REQUEST_INVALID',
+  });
+  assert.equal(getterReads, 0);
+  assert.equal(proxyTraps, 0);
+});
+
+test('batch mutation IPC accepts only complete mutually exclusive requested-ID buckets', async () => {
+  const results = [
+    { success: true, updatedIds: ['p1'], unchangedIds: [], skippedIds: [] },
+    { success: true, updatedIds: ['p1'], unchangedIds: [], skippedIds: ['p1'] },
+    { success: true, updatedIds: ['p1', 'p1'], unchangedIds: [], skippedIds: [] },
+    { success: true, updatedIds: ['p1', 'p3'], unchangedIds: [], skippedIds: [] },
+    { success: true, updatedIds: ['p1'], unchangedIds: null, skippedIds: ['p2'] },
+  ];
+  const { handlers } = createHandlerFixture({
+    workspaceService: {
+      assignMany: () => results.shift(),
+    },
+  });
+
+  for (let index = 0; index < 5; index += 1) {
+    assert.deepEqual(await handlers.get('assign-profiles-workspace')({}, {
+      profileIds: ['p1', 'p2'],
+      workspaceId: null,
+    }), { success: false, code: 'BATCH_PROFILE_UPDATE_FAILED' });
+  }
+});
+
+test('batch mutation and selected export IPC expose only stable failure results', async () => {
+  const workspaceMissing = createHandlerFixture({
+    workspaceService: {
+      assignMany: () => ({ success: false, error: 'Workspace not found', path: privatePath }),
+    },
+  });
+  assert.deepEqual(await workspaceMissing.handlers.get('assign-profiles-workspace')({}, {
+    profileIds: ['p1'],
+    workspaceId: 'missing',
+  }), { success: false, code: 'WORKSPACE_NOT_FOUND' });
+
+  const exportResults = [
+    { success: false, canceled: true, path: privatePath },
+    { success: false, code: 'PROFILE_EXPORT_EMPTY_SELECTION', path: privatePath },
+    { success: true, count: 0, skippedCount: 0, path: privatePath },
+    { success: false, error: privatePath },
+  ];
+  const selectedExport = createHandlerFixture({
+    profileService: { exportMetadata: () => exportResults.shift() },
+  });
+  const expected = [
+    { success: false, canceled: true },
+    { success: false, code: 'PROFILE_EXPORT_EMPTY_SELECTION' },
+    { success: false, code: 'PROFILE_EXPORT_FAILED' },
+    { success: false, code: 'PROFILE_EXPORT_FAILED' },
+  ];
+  for (const result of expected) {
+    assert.deepEqual(await selectedExport.handlers.get('export-selected-profiles')({}, {
+      profileIds: ['p1'],
+    }), result);
+  }
 });
 
 test('workspace IPC returns a safe result when an asynchronous service operation rejects', async () => {

@@ -44,6 +44,9 @@ test('preload exposes narrow workspace and favorite APIs with their intended pay
   await browserApi.deleteWorkspace('workspace-1');
   await browserApi.assignProfileWorkspace('profile-1', null);
   await browserApi.setProfileFavorite('profile-1', true);
+  await browserApi.assignProfilesWorkspace(['p1', 'p2'], null);
+  await browserApi.setProfilesFavorite(['p1'], true);
+  await browserApi.exportSelectedProfiles(['p2']);
 
   assert.deepEqual(JSON.parse(JSON.stringify(invocations)), [
     { channel: 'get-workspaces', args: [] },
@@ -58,6 +61,15 @@ test('preload exposes narrow workspace and favorite APIs with their intended pay
       channel: 'set-profile-favorite',
       args: [{ profileId: 'profile-1', favorite: true }],
     },
+    {
+      channel: 'assign-profiles-workspace',
+      args: [{ profileIds: ['p1', 'p2'], workspaceId: null }],
+    },
+    {
+      channel: 'set-profiles-favorite',
+      args: [{ profileIds: ['p1'], favorite: true }],
+    },
+    { channel: 'export-selected-profiles', args: [{ profileIds: ['p2'] }] },
   ]);
 });
 

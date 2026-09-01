@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld('browserAPI', {
   cloneProfile: (profileId) => ipcRenderer.invoke('clone-profile', profileId),
   getProfileSize: (profileId) => ipcRenderer.invoke('get-profile-size', profileId),
   exportProfiles: () => ipcRenderer.invoke('export-profiles'),
+  exportSelectedProfiles: (profileIds) => (
+    ipcRenderer.invoke('export-selected-profiles', { profileIds })
+  ),
   previewImport: () => ipcRenderer.invoke('preview-import'),
   executeImport: (token, decisions) => (
     ipcRenderer.invoke('execute-import', { token, decisions })
@@ -67,8 +70,14 @@ contextBridge.exposeInMainWorld('browserAPI', {
   assignProfileWorkspace: (profileId, workspaceId) => (
     ipcRenderer.invoke('assign-profile-workspace', { profileId, workspaceId })
   ),
+  assignProfilesWorkspace: (profileIds, workspaceId) => (
+    ipcRenderer.invoke('assign-profiles-workspace', { profileIds, workspaceId })
+  ),
   setProfileFavorite: (profileId, favorite) => (
     ipcRenderer.invoke('set-profile-favorite', { profileId, favorite })
+  ),
+  setProfilesFavorite: (profileIds, favorite) => (
+    ipcRenderer.invoke('set-profiles-favorite', { profileIds, favorite })
   ),
   inspectProfileDiagnostics: (profileId) => (
     ipcRenderer.invoke('inspect-profile-diagnostics', profileId)
