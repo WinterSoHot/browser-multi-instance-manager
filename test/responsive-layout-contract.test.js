@@ -54,8 +54,10 @@ test('compact and narrow breakpoints prevent horizontal card overflow', () => {
   const narrowStyles = extractMediaBlock(styles, 'max-width: 680px');
   assert.match(compactStyles, /\.profile-card\s*\{[^}]*flex-direction:\s*column;/u);
   assert.match(compactStyles, /\.profile-actions\s+\.btn\s*\{[^}]*min-height:\s*36px;/u);
+  assert.match(compactStyles, /\.header-actions\s+\.btn\s*,\s*\.sort-control\s+select\s*\{[^}]*min-height:\s*36px;/u);
   assert.match(narrowStyles, /\.workspace-layout\s*\{[^}]*grid-template-columns:\s*1fr;/u);
   assert.match(narrowStyles, /\.workspace-sidebar\s*\{[^}]*position:\s*static;/u);
+  assert.match(narrowStyles, /\.workspace-filter-list,\s*\.workspace-custom-list,\s*\.workspace-batch-actions\s*\{[^}]*flex-direction:\s*row;[^}]*flex-wrap:\s*wrap;/u);
 });
 
 test('profiles section keeps its decorative overlay inside the visible menu area', () => {

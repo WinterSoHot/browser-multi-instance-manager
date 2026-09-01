@@ -1563,6 +1563,11 @@ section:hover {
     min-height: 36px;
   }
 
+  .header-actions .btn,
+  .sort-control select {
+    min-height: 36px;
+  }
+
   .workspace-assignment select {
     min-height: 36px;
   }
