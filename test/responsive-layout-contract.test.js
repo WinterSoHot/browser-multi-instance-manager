@@ -14,6 +14,20 @@ function extractRule(css, selector) {
   return match ? match[1] : '';
 }
 
+function extractMediaBlock(css, mediaQuery) {
+  const mediaStart = css.indexOf(`@media (${mediaQuery})`);
+  if (mediaStart === -1) return '';
+  const openingBrace = css.indexOf('{', mediaStart);
+  if (openingBrace === -1) return '';
+  let depth = 1;
+  for (let index = openingBrace + 1; index < css.length; index += 1) {
+    if (css[index] === '{') depth += 1;
+    if (css[index] === '}') depth -= 1;
+    if (depth === 0) return css.slice(openingBrace + 1, index);
+  }
+  return '';
+}
+
 test('primary create action precedes the secondary toolbar', () => {
   const createActionPosition = html.indexOf('id="openAddModal"');
   const toolbarPosition = html.indexOf('class="header-actions"');
@@ -31,8 +45,10 @@ test('profile names expose full text while CSS keeps them on one line', () => {
 });
 
 test('compact and narrow breakpoints prevent horizontal card overflow', () => {
-  assert.match(styles, /@media \(max-width:\s*900px\)[\s\S]*\.profile-card\s*\{[^}]*flex-direction:\s*column;/u);
-  assert.match(styles, /@media \(max-width:\s*900px\)[\s\S]*\.profile-actions\s+\.btn\s*\{[^}]*min-height:\s*36px;/u);
-  assert.match(styles, /@media \(max-width:\s*680px\)[\s\S]*\.workspace-layout\s*\{[^}]*grid-template-columns:\s*1fr;/u);
-  assert.match(styles, /@media \(max-width:\s*680px\)[\s\S]*\.workspace-sidebar\s*\{[^}]*position:\s*static;/u);
+  const compactStyles = extractMediaBlock(styles, 'max-width: 900px');
+  const narrowStyles = extractMediaBlock(styles, 'max-width: 680px');
+  assert.match(compactStyles, /\.profile-card\s*\{[^}]*flex-direction:\s*column;/u);
+  assert.match(compactStyles, /\.profile-actions\s+\.btn\s*\{[^}]*min-height:\s*36px;/u);
+  assert.match(narrowStyles, /\.workspace-layout\s*\{[^}]*grid-template-columns:\s*1fr;/u);
+  assert.match(narrowStyles, /\.workspace-sidebar\s*\{[^}]*position:\s*static;/u);
 });
