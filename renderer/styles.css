@@ -221,6 +221,7 @@ body::before {
   grid-template-columns: minmax(172px, 220px) minmax(0, 1fr);
   gap: 20px;
   align-items: start;
+  min-width: 0;
 }
 
 .workspace-sidebar {
@@ -573,10 +574,19 @@ section {
 
 .profiles-section {
   overflow: visible;
+  min-width: 0;
 }
 
 .profiles-section > .section-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   z-index: 20;
+}
+
+.profiles-section > .section-header .header-actions {
+  grid-column: 1 / -1;
+  width: 100%;
 }
 
 /* Subtle gradient overlay */
@@ -1043,6 +1053,7 @@ section:hover {
   align-items: center;
   gap: 14px;
   flex: 1;
+  min-width: 0;
 }
 
 .profile-info h3 {
@@ -1051,6 +1062,10 @@ section:hover {
   letter-spacing: -0.01em;
   color: var(--text);
   transition: color var(--transition);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .profile-card:hover .profile-info h3 {
@@ -1493,6 +1508,62 @@ section:hover {
     margin-top: 4px;
     box-shadow: none;
   }
+}
+
+@media (max-width: 900px) {
+  .container {
+    padding: 20px 16px;
+  }
+
+  .workspace-layout {
+    grid-template-columns: 148px minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .workspace-sidebar,
+  section {
+    padding: 14px;
+  }
+
+  .search-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .filter-group {
+    width: 100%;
+  }
+
+  .filter-btn {
+    flex: 1 1 64px;
+    text-align: center;
+  }
+
+  .profile-card {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .profile-info,
+  .profile-actions {
+    width: 100%;
+  }
+
+  .profile-actions {
+    justify-content: flex-start;
+  }
+
+  .profile-actions .btn {
+    min-height: 36px;
+  }
+
+  .workspace-assignment select {
+    min-height: 36px;
+  }
+}
+
+@media (max-width: 680px) {
 
   .workspace-layout {
     grid-template-columns: 1fr;
