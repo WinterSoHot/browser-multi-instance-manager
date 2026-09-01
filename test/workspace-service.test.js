@@ -12,16 +12,24 @@ try {
   // The first TDD run intentionally exercises the missing service.
 }
 
-function createServiceFixture({ profiles = [], workspaces = [], rejectSplitWrites = false } = {}) {
+function createServiceFixture({
+  profiles = [],
+  workspaces = [],
+  rejectSplitWrites = false,
+  rejectProfileWrites = false,
+} = {}) {
   let storeState = {
     profiles: structuredClone(profiles),
     workspaces: structuredClone(workspaces),
   };
   let identifier = 0;
+  let profileWriteCount = 0;
   const profileOperations = createProfileOperationCoordinator();
   const appStore = {
     getProfiles: () => structuredClone(storeState.profiles),
     setProfiles: (nextProfiles) => {
+      profileWriteCount += 1;
+      if (rejectProfileWrites) throw new Error('Profile write failed');
       if (rejectSplitWrites) throw new Error('Separate profile writes are not allowed');
       storeState.profiles = structuredClone(nextProfiles);
     },
@@ -49,6 +57,7 @@ function createServiceFixture({ profiles = [], workspaces = [], rejectSplitWrite
     appStore,
     profileOperations,
     storeState: () => structuredClone(storeState),
+    profileWriteCount: () => profileWriteCount,
   };
 }
 
@@ -216,4 +225,86 @@ test('serializes workspace assignment and favorite updates with global profile m
   assert.deepEqual(fixture.storeState().profiles, [
     { id: 'profile-1', workspaceId: null, favorite: false },
   ]);
+});
+
+test('bulk workspace assignment classifies targets and writes once', async () => {
+  const fixture = createServiceFixture({
+    profiles: [
+      { id: 'p1', workspaceId: null, favorite: false },
+      { id: 'p2', workspaceId: 'w1', favorite: false },
+      { id: 'p3', workspaceId: null, favorite: true },
+    ],
+    workspaces: [{ id: 'w1', name: 'Work', createdAt: '2026-08-30T00:00:00.000Z' }],
+  });
+
+  assert.deepEqual(await fixture.service.assignMany({
+    profileIds: ['p3', 'missing', 'p2', 'p1', 'p3'],
+    workspaceId: 'w1',
+  }), {
+    success: true,
+    updatedIds: ['p1', 'p3'],
+    unchangedIds: ['p2'],
+    skippedIds: ['missing'],
+  });
+  assert.equal(fixture.profileWriteCount(), 1);
+  assert.deepEqual(fixture.storeState().profiles.map(({ id, workspaceId }) => ({ id, workspaceId })), [
+    { id: 'p1', workspaceId: 'w1' },
+    { id: 'p2', workspaceId: 'w1' },
+    { id: 'p3', workspaceId: 'w1' },
+  ]);
+});
+
+test('bulk favorite no-op and missing targets avoid writes', async () => {
+  const fixture = createServiceFixture({
+    profiles: [{ id: 'p1', workspaceId: null, favorite: true }],
+  });
+  assert.deepEqual(await fixture.service.setFavoriteMany({
+    profileIds: ['missing', 'p1'],
+    favorite: true,
+  }), {
+    success: true,
+    updatedIds: [],
+    unchangedIds: ['p1'],
+    skippedIds: ['missing'],
+  });
+  assert.equal(fixture.profileWriteCount(), 0);
+});
+
+test('bulk workspace assignment rejects an unknown workspace before writing', async () => {
+  const fixture = createServiceFixture({
+    profiles: [{ id: 'p1', workspaceId: null, favorite: false }],
+  });
+  assert.deepEqual(await fixture.service.assignMany({
+    profileIds: ['p1'],
+    workspaceId: 'missing',
+  }), { success: false, error: 'Workspace not found' });
+  assert.equal(fixture.profileWriteCount(), 0);
+});
+
+test('a rejected bulk profile write leaves stored profiles unchanged', async () => {
+  const profiles = [{ id: 'p1', workspaceId: null, favorite: false }];
+  const fixture = createServiceFixture({ profiles, rejectProfileWrites: true });
+  await assert.rejects(
+    fixture.service.setFavoriteMany({ profileIds: ['p1'], favorite: true }),
+    /Profile write failed/u,
+  );
+  assert.deepEqual(fixture.storeState().profiles, profiles);
+});
+
+test('bulk workspace validation observes the latest serialized workspace state', async () => {
+  const fixture = createServiceFixture({
+    profiles: [{ id: 'p1', workspaceId: null, favorite: false }],
+    workspaces: [{ id: 'w1', name: 'Work', createdAt: '2026-08-30T00:00:00.000Z' }],
+  });
+  let releaseRemoval;
+  const removal = fixture.profileOperations.runGlobalMutation(async () => {
+    await new Promise((resolve) => { releaseRemoval = resolve; });
+    fixture.appStore.setWorkspaces([]);
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const assignment = fixture.service.assignMany({ profileIds: ['p1'], workspaceId: 'w1' });
+  releaseRemoval();
+  await removal;
+  assert.deepEqual(await assignment, { success: false, error: 'Workspace not found' });
+  assert.equal(fixture.profileWriteCount(), 0);
 });
