@@ -44,6 +44,11 @@ test('profile names expose full text while CSS keeps them on one line', () => {
   assert.match(profileNameRule, /overflow:\s*hidden;/u);
 });
 
+test('grid-view profile names keep a bounded width for ellipsis', () => {
+  const gridProfileNameRule = extractRule(styles, '.profiles-list.view-grid .profile-info h3');
+  assert.match(gridProfileNameRule, /width:\s*100%;/u);
+});
+
 test('compact and narrow breakpoints prevent horizontal card overflow', () => {
   const compactStyles = extractMediaBlock(styles, 'max-width: 900px');
   const narrowStyles = extractMediaBlock(styles, 'max-width: 680px');

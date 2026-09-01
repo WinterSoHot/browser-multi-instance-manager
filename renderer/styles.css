@@ -1191,6 +1191,7 @@ section:hover {
 }
 
 .profiles-list.view-grid .profile-info h3 {
+  width: 100%;
   font-size: 17px;
   font-weight: 700;
 }
