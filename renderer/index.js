@@ -25,6 +25,7 @@ const {
   createBatchMenuState,
   createProfileBatchOrganizer,
   getOrganizationActionFocusTarget,
+  getMenuViewportMaxHeight,
   getOrganizationWorkspaceTargets,
   nextMenuItemIndex,
 } = window.profileBatchOrganizer;
@@ -1418,6 +1419,29 @@ function focusOrganizationMenuEdge(menu, edge = 'first') {
   target?.focus();
 }
 
+function updateOrganizationMenuViewportBounds() {
+  if (!batchMenuState.getSnapshot().open) return;
+  [
+    document.getElementById('organizeSelectedMenu'),
+    document.getElementById('organizeWorkspaceMenu'),
+  ].forEach((menu) => {
+    if (!menu || menu.hidden) return;
+    const menuTop = menu.getBoundingClientRect().top;
+    const maxHeight = getMenuViewportMaxHeight(window.innerHeight, menuTop, 16);
+    menu.style.setProperty('--batch-organize-available-height', `${maxHeight}px`);
+  });
+}
+
+function openOrganizationMenu(edge = 'first') {
+  if (!batchMenuState.getSnapshot().open) batchMenuState.toggle();
+  if (!batchMenuState.getSnapshot().open) return;
+  organizationWorkspaceMenuOpen = true;
+  renderOrganizationWorkspaceMenu();
+  updateOrganizeSelectedButton();
+  updateOrganizationMenuViewportBounds();
+  focusOrganizationMenuEdge(document.getElementById('organizeSelectedMenu'), edge);
+}
+
 function closeOrganizationMenu(restoreFocus = true) {
   const wasOpen = batchMenuState.getSnapshot().open;
   batchMenuState.close();
@@ -1430,6 +1454,7 @@ function toggleOrganizationWorkspaceMenu() {
   organizationWorkspaceMenuOpen = !organizationWorkspaceMenuOpen;
   if (organizationWorkspaceMenuOpen) renderOrganizationWorkspaceMenu();
   updateOrganizeSelectedButton();
+  updateOrganizationMenuViewportBounds();
   if (organizationWorkspaceMenuOpen) {
     focusOrganizationMenuEdge(document.getElementById('organizeWorkspaceMenu'));
   }
@@ -1521,18 +1546,14 @@ const organizeSelectedBtn = document.getElementById('organizeSelectedBtn');
 const organizeSelectedMenu = document.getElementById('organizeSelectedMenu');
 
 organizeSelectedBtn.addEventListener('click', () => {
-  batchMenuState.toggle();
-  if (!batchMenuState.getSnapshot().open) organizationWorkspaceMenuOpen = false;
-  updateOrganizeSelectedButton();
-  if (batchMenuState.getSnapshot().open) focusOrganizationMenuEdge(organizeSelectedMenu);
+  if (batchMenuState.getSnapshot().open) closeOrganizationMenu(false);
+  else openOrganizationMenu();
 });
 
 organizeSelectedBtn.addEventListener('keydown', (event) => {
   if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
   event.preventDefault();
-  if (!batchMenuState.getSnapshot().open) batchMenuState.toggle();
-  updateOrganizeSelectedButton();
-  focusOrganizationMenuEdge(organizeSelectedMenu, event.key === 'ArrowUp' ? 'last' : 'first');
+  openOrganizationMenu(event.key === 'ArrowUp' ? 'last' : 'first');
 });
 
 organizeSelectedMenu.addEventListener('keydown', handleOrganizationMenuKeydown);
@@ -1559,6 +1580,8 @@ document.addEventListener('pointerdown', (event) => {
     closeOrganizationMenu(false);
   }
 });
+
+window.addEventListener('resize', updateOrganizationMenuViewportBounds);
 
 // Initialize
 void loadProfiles().catch(() => {

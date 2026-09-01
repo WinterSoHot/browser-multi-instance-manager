@@ -325,7 +325,7 @@ body::before {
 .batch-organize-submenu {
   top: 6px;
   right: calc(100% + 6px);
-  max-height: calc(100vh - 32px);
+  max-height: var(--batch-organize-available-height);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -569,6 +569,14 @@ section {
   transition: all var(--transition);
   position: relative;
   overflow: hidden;
+}
+
+.profiles-section {
+  overflow: visible;
+}
+
+.profiles-section > .section-header {
+  z-index: 20;
 }
 
 /* Subtle gradient overlay */
@@ -1471,7 +1479,7 @@ section:hover {
   }
 
   .batch-organize-menu {
-    max-height: calc(100vh - 32px);
+    max-height: var(--batch-organize-available-height);
     overflow-y: auto;
     overscroll-behavior: contain;
   }
@@ -1480,7 +1488,7 @@ section:hover {
     position: static;
     min-width: 0;
     max-width: none;
-    max-height: min(50vh, calc(100vh - 32px));
+    max-height: min(50vh, var(--batch-organize-available-height));
     overflow-y: auto;
     margin-top: 4px;
     box-shadow: none;

@@ -69,6 +69,13 @@
     ];
   }
 
+  function getMenuViewportMaxHeight(viewportHeight, menuTop, bottomMargin = 16) {
+    const height = Number.isFinite(viewportHeight) ? Math.max(0, viewportHeight) : 0;
+    const top = Number.isFinite(menuTop) ? Math.max(0, menuTop) : 0;
+    const margin = Number.isFinite(bottomMargin) ? Math.max(0, bottomMargin) : 0;
+    return Math.max(0, Math.floor(height - top - margin));
+  }
+
   function normalizeMutationResult(result, requestedIds) {
     if (result?.success !== true) {
       return { success: false, code: safeFailureCode(result?.code, mutationFailureCodes) };
@@ -183,6 +190,6 @@
   }
 
   return { createBatchMenuState, nextMenuItemIndex, getOrganizationActionFocusTarget,
-    getOrganizationWorkspaceTargets, normalizeMutationResult, formatMutationSummary,
-    createProfileBatchOrganizer };
+    getOrganizationWorkspaceTargets, getMenuViewportMaxHeight, normalizeMutationResult,
+    formatMutationSummary, createProfileBatchOrganizer };
 }));

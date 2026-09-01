@@ -60,6 +60,12 @@ test('workspace organization menu retains every target in a many-workspace list'
   assert.deepEqual(targets[200], { id: 'workspace-200', name: 'Workspace 200' });
 });
 
+test('menu viewport height is derived from its actual viewport top', () => {
+  assert.equal(organizer.getMenuViewportMaxHeight(700, 180, 16), 504);
+  assert.equal(organizer.getMenuViewportMaxHeight(700, 684, 16), 0);
+  assert.equal(organizer.getMenuViewportMaxHeight(700, 720, 16), 0);
+});
+
 test('mutation results keep only disjoint requested ID buckets', () => {
   assert.deepEqual(organizer.normalizeMutationResult({
     success: true,
