@@ -57,3 +57,11 @@ test('compact and narrow breakpoints prevent horizontal card overflow', () => {
   assert.match(narrowStyles, /\.workspace-layout\s*\{[^}]*grid-template-columns:\s*1fr;/u);
   assert.match(narrowStyles, /\.workspace-sidebar\s*\{[^}]*position:\s*static;/u);
 });
+
+test('profiles section keeps its decorative overlay inside the visible menu area', () => {
+  const profilesSectionRule = extractRule(styles, '.profiles-section');
+  const profilesOverlayRule = extractRule(styles, '.profiles-section::before');
+
+  assert.match(profilesSectionRule, /overflow:\s*visible;/u);
+  assert.match(profilesOverlayRule, /right:\s*0;/u);
+});

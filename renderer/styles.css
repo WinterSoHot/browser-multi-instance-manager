@@ -577,6 +577,10 @@ section {
   min-width: 0;
 }
 
+.profiles-section::before {
+  right: 0;
+}
+
 .profiles-section > .section-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
