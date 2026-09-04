@@ -62,6 +62,20 @@ test('grid-view profile names keep a bounded width for ellipsis', () => {
   assert.match(gridProfileNameRule, /width:\s*100%;/u);
 });
 
+test('grid-view identity resets the list card flex basis', () => {
+  const gridProfileInfoRule = extractRule(styles, '.profiles-list.view-grid .profile-info');
+  assert.match(gridProfileInfoRule, /flex:\s*0 1 auto;/u);
+});
+
+test('workspace tags stay bounded inside visible-overflow cards', () => {
+  const workspaceTagRule = extractRule(styles, '.workspace-tag');
+  assert.match(workspaceTagRule, /min-width:\s*0;/u);
+  assert.match(workspaceTagRule, /max-width:\s*min\(100%,\s*160px\);/u);
+  assert.match(workspaceTagRule, /overflow:\s*hidden;/u);
+  assert.match(workspaceTagRule, /text-overflow:\s*ellipsis;/u);
+  assert.match(workspaceTagRule, /white-space:\s*nowrap;/u);
+});
+
 test('list cards keep a compact row and move the complete action group when needed', () => {
   const card = extractRuleContaining(styles, '.profile-card', 'display: flex');
   const info = extractRule(styles, '.profile-info');
@@ -77,7 +91,7 @@ test('list cards keep a compact row and move the complete action group when need
 test('compact and narrow breakpoints prevent horizontal card overflow', () => {
   const compactStyles = extractMediaBlock(styles, 'max-width: 900px');
   const narrowStyles = extractMediaBlock(styles, 'max-width: 680px');
-  assert.match(compactStyles, /\.profile-actions\s*\{[^}]*width:\s*100%;[^}]*margin-left:\s*0;/u);
+  assert.match(compactStyles, /\.profile-actions\s*\{[^}]*width:\s*100%;[^}]*margin-left:\s*0;[^}]*flex-wrap:\s*wrap;/u);
   assert.match(compactStyles, /\.profile-actions\s+\.btn\s*\{[^}]*min-height:\s*36px;/u);
   assert.match(compactStyles, /\.header-actions\s+\.btn\s*,\s*\.sort-control\s+select\s*\{[^}]*min-height:\s*36px;/u);
   assert.match(narrowStyles, /\.workspace-layout\s*\{[^}]*grid-template-columns:\s*1fr;/u);
