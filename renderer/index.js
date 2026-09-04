@@ -589,14 +589,14 @@ function openProfileCardMenu(profileId, trigger) {
 }
 
 function handleProfileCardMenuKeydown(event) {
-  const menuItem = event.target.closest('[role="menuitem"]');
-  const menu = event.target.closest('[data-profile-menu]');
-  if (!menu || !menuItem || !menu.contains(menuItem)) return;
-  if (event.key === 'Escape') {
+  if (event.key === 'Escape' && profileCardMenuState.getSnapshot().openProfileId !== null) {
     event.preventDefault();
     closeProfileCardMenu({ restoreFocus: true });
     return;
   }
+  const menuItem = event.target.closest('[role="menuitem"]');
+  const menu = event.target.closest('[data-profile-menu]');
+  if (!menu || !menuItem || !menu.contains(menuItem)) return;
   const items = getProfileCardMenuItems(menu);
   const nextIndex = nextProfileCardMenuItemIndex(items.indexOf(menuItem), event.key, items.length);
   if (nextIndex === null) return;
@@ -619,6 +619,11 @@ profilesList.addEventListener('click', (event) => {
   }
 
   const button = event.target.closest('[data-profile-action]');
+  const menu = event.target.closest('[data-profile-menu]');
+  if (menu && profilesList.contains(menu) && !button) {
+    event.stopPropagation();
+    return;
+  }
   if (!button) {
     const card = event.target.closest('.profile-card');
     if (card && shouldToggleProfileCardSelection(event.target) && !event.target.closest('.checkbox-label')) {
