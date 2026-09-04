@@ -25,5 +25,26 @@
     return null;
   }
 
-  return { createProfileCardMenuState, nextProfileCardMenuItemIndex };
+  function getProfileCardMenuActivationType(eventDetail) {
+    return eventDetail === 0 ? 'keyboard' : 'pointer';
+  }
+
+  function getProfileCardMenuActionFocusTarget({
+    activationType,
+    hasVisibleModal,
+    originalTrigger,
+    replacementTrigger,
+    fallback,
+  }) {
+    if (activationType !== 'keyboard' || hasVisibleModal) return null;
+    if (originalTrigger?.isConnected) return originalTrigger;
+    return replacementTrigger || fallback || null;
+  }
+
+  return {
+    createProfileCardMenuState,
+    getProfileCardMenuActionFocusTarget,
+    getProfileCardMenuActivationType,
+    nextProfileCardMenuItemIndex,
+  };
 }));

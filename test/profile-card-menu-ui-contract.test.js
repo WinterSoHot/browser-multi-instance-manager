@@ -28,7 +28,11 @@ function extractRuleContaining(css, selector, declaration) {
 }
 
 test('profile More menu module loads before the renderer entry point', () => {
-  assert.ok(html.indexOf('profile-card-menu.js') < html.indexOf('index.js'));
+  const menuModulePosition = html.indexOf('profile-card-menu.js');
+  const rendererEntryPosition = html.indexOf('index.js');
+  assert.notEqual(menuModulePosition, -1);
+  assert.notEqual(rendererEntryPosition, -1);
+  assert.ok(menuModulePosition < rendererEntryPosition);
   assert.match(source, /window\.profileCardMenu/u);
 });
 
@@ -36,6 +40,7 @@ test('rendered cards expose direct actions and an accessible More menu', () => {
   assert.match(source, /data-profile-action="toggle-favorite"/u);
   assert.match(source, /class="workspace-assignment"/u);
   assert.match(source, /data-profile-menu-trigger[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"/u);
+  assert.match(source, /data-profile-menu role="menu" aria-label="\$\{escapeHtml\(profile\.name\)\} 的更多操作" hidden/u);
   for (const action of ['open-folder', 'profile-size', 'clone', 'rename', 'delete']) {
     assert.match(source, new RegExp(`role="menuitem"[^>]*data-profile-action="${action}"`, 'u'));
   }
@@ -59,7 +64,21 @@ test('menu closes without selecting its card', () => {
   assert.match(source, /data-profile-menu-trigger[\s\S]*stopPropagation\(\)/u);
   assert.match(source, /pointerdown[\s\S]*closeProfileCardMenu/u);
   assert.match(source, /event\.key === 'Escape'[\s\S]*closeProfileCardMenu/u);
-  assert.match(source, /closeProfileCardMenu\(\{ restoreFocus: false \}\)[\s\S]*Promise\.resolve\(action/u);
+  assert.match(source, /getProfileCardMenuActivationType\(event\.detail\)/u);
+  assert.match(source, /closeProfileCardMenu\(\{ restoreFocus: activationType === 'keyboard' \}\)[\s\S]*Promise\.resolve\(action/u);
+});
+
+test('keyboard menu action focus is restored after settlement with a modal guard', () => {
+  assert.match(source, /document\.querySelector\('\.modal\.show'\) !== null/u);
+  assert.match(source, /getProfileCardMenuActionFocusTarget\(\{/u);
+  assert.match(source, /if \(activationType === 'keyboard'[^)]*\)[\s\S]*actionPromise\.finally\(\(\) =>\s*restoreProfileCardMenuActionFocus/u);
+});
+
+test('keyboard-visible profile actions and menu items use opaque high-contrast colors', () => {
+  assert.match(styles, /--danger-text:\s*#b42318;/u);
+  assert.match(styles, /\.profile-actions:focus-within,\s*\.profile-actions:has\(\.profile-more-trigger\[aria-expanded="true"\]\)\s*\{[^}]*opacity:\s*1;/u);
+  assert.match(styles, /\.profile-more-menu button:focus-visible\s*\{[^}]*outline:\s*3px solid var\(--primary\);/u);
+  assert.match(styles, /\.profile-more-menu \.danger\s*\{[^}]*color:\s*var\(--danger-text\);/u);
 });
 
 test('menu surfaces are isolated before card selection handling', () => {

@@ -95,14 +95,17 @@ test('list cards keep a compact row and move the complete action group when need
 
 test('compact and narrow breakpoints prevent horizontal card overflow', () => {
   const compactStyles = extractMediaBlock(styles, 'max-width: 900px');
+  const collapsedWorkspaceStyles = extractMediaBlock(styles, 'max-width: 760px');
   const narrowStyles = extractMediaBlock(styles, 'max-width: 680px');
-  assert.match(compactStyles, /\.profile-actions\s*\{[^}]*width:\s*100%;[^}]*margin-left:\s*0;[^}]*flex-wrap:\s*wrap;/u);
+  assert.match(compactStyles, /\.profile-actions\s*\{[^}]*width:\s*100%;[^}]*margin-left:\s*0;[^}]*flex-wrap:\s*nowrap;/u);
+  assert.doesNotMatch(compactStyles, /\.profile-actions\s*\{[^}]*flex-wrap:\s*wrap;/u);
   assert.match(compactStyles, /\.profile-actions\s+\.btn\s*\{[^}]*min-height:\s*36px;/u);
   assert.match(compactStyles, /\.header-actions\s+\.btn\s*,\s*\.sort-control\s+select\s*\{[^}]*min-height:\s*36px;/u);
-  assert.match(narrowStyles, /\.workspace-layout\s*\{[^}]*grid-template-columns:\s*1fr;/u);
+  assert.match(collapsedWorkspaceStyles, /\.workspace-layout\s*\{[^}]*grid-template-columns:\s*1fr;/u);
+  assert.match(collapsedWorkspaceStyles, /\.workspace-sidebar\s*\{[^}]*position:\s*static;/u);
+  assert.match(collapsedWorkspaceStyles, /\.workspace-filter-list,\s*\.workspace-custom-list,\s*\.workspace-batch-actions\s*\{[^}]*flex-direction:\s*row;[^}]*flex-wrap:\s*wrap;/u);
+  assert.match(collapsedWorkspaceStyles, /\.workspace-filter-btn,\s*\.workspace-batch-actions \.btn\s*\{[^}]*width:\s*auto;/u);
   assert.match(narrowStyles, /\.profiles-list\.view-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/u);
-  assert.match(narrowStyles, /\.workspace-sidebar\s*\{[^}]*position:\s*static;/u);
-  assert.match(narrowStyles, /\.workspace-filter-list,\s*\.workspace-custom-list,\s*\.workspace-batch-actions\s*\{[^}]*flex-direction:\s*row;[^}]*flex-wrap:\s*wrap;/u);
   assert.doesNotMatch(narrowStyles, /\.profile-card\s*\{[^}]*flex-direction:\s*column;/u);
   assert.match(narrowStyles, /\.profile-actions\s*\{[^}]*flex-wrap:\s*wrap;/u);
   assert.match(narrowStyles, /\.profile-actions\s*>\s*\*\s*\{[^}]*min-height:\s*36px;/u);

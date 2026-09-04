@@ -23,6 +23,8 @@ const {
 } = window.workspaceBatch;
 const {
   createProfileCardMenuState,
+  getProfileCardMenuActionFocusTarget,
+  getProfileCardMenuActivationType,
   nextProfileCardMenuItemIndex,
 } = window.profileCardMenu;
 const {
@@ -347,7 +349,7 @@ function renderProfiles() {
             data-profile-menu-trigger data-profile-id="${escapeHtml(profile.id)}"
             aria-haspopup="menu" aria-expanded="false"
             aria-label="${escapeHtml(profile.name)} 的更多操作">•••</button>
-          <div class="profile-more-menu" data-profile-menu role="menu" hidden>
+          <div class="profile-more-menu" data-profile-menu role="menu" aria-label="${escapeHtml(profile.name)} 的更多操作" hidden>
             <button type="button" role="menuitem" data-profile-action="open-folder" data-profile-id="${escapeHtml(profile.id)}">打开文件夹</button>
             <button type="button" role="menuitem" data-profile-action="profile-size" data-profile-id="${escapeHtml(profile.id)}">查看占用大小</button>
             <button type="button" role="menuitem" data-profile-action="clone" data-profile-id="${escapeHtml(profile.id)}">新建空白副本</button>
@@ -558,6 +560,17 @@ function findProfileCardMenuTrigger(profileId) {
     .find((trigger) => trigger.dataset.profileId === profileId) || null;
 }
 
+function restoreProfileCardMenuActionFocus(profileId, activationType, originalTrigger) {
+  const target = getProfileCardMenuActionFocusTarget({
+    activationType,
+    hasVisibleModal: document.querySelector('.modal.show') !== null,
+    originalTrigger,
+    replacementTrigger: findProfileCardMenuTrigger(profileId),
+    fallback: document.getElementById('openAddModal'),
+  });
+  if (target && typeof target.focus === 'function') target.focus();
+}
+
 function getProfileCardMenuItems(menu) {
   return Array.from(menu.querySelectorAll('[role="menuitem"]'))
     .filter((item) => !item.disabled);
@@ -633,8 +646,11 @@ profilesList.addEventListener('click', (event) => {
   }
 
   const profileId = button.dataset.profileId;
-  if (button.closest('[data-profile-menu]')) {
-    closeProfileCardMenu({ restoreFocus: false });
+  const profileMenu = button.closest('[data-profile-menu]');
+  const activationType = getProfileCardMenuActivationType(event.detail);
+  const originalTrigger = profileMenu ? findProfileCardMenuTrigger(profileId) : null;
+  if (profileMenu) {
+    closeProfileCardMenu({ restoreFocus: activationType === 'keyboard' });
   }
   const actions = {
     launchBrowserOnly,
@@ -651,9 +667,16 @@ profilesList.addEventListener('click', (event) => {
   };
   const action = actions[button.dataset.profileAction];
   if (action) {
-    void Promise.resolve(action(profileId, button)).catch(() => {
+    const actionPromise = Promise.resolve(action(profileId, button)).catch(() => {
       showToast('操作失败，请重试', 'error');
     });
+    if (activationType === 'keyboard' && profileMenu) {
+      void actionPromise.finally(() => restoreProfileCardMenuActionFocus(
+        profileId,
+        activationType,
+        originalTrigger,
+      ));
+    }
   }
 });
 

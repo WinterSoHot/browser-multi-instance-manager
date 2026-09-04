@@ -15,6 +15,7 @@
   --success-gradient: linear-gradient(135deg, #34c759 0%, #28a745 100%);
 
   --danger: #ff3b30;
+  --danger-text: #b42318;
   --danger-hover: #e3342a;
   --danger-light: rgba(255, 59, 48, 0.08);
   --danger-gradient: linear-gradient(135deg, #ff3b30 0%, #e3342a 100%);
@@ -1156,6 +1157,11 @@ section:hover {
   opacity: 1;
 }
 
+.profile-actions:focus-within,
+.profile-actions:has(.profile-more-trigger[aria-expanded="true"]) {
+  opacity: 1;
+}
+
 .profile-actions .btn {
   padding: 7px 12px;
   font-size: 13px;
@@ -1216,7 +1222,7 @@ section:hover {
 }
 
 .profile-more-menu button:focus-visible {
-  outline: 3px solid var(--primary-light);
+  outline: 3px solid var(--primary);
   outline-offset: -1px;
 }
 
@@ -1227,7 +1233,7 @@ section:hover {
 }
 
 .profile-more-menu .danger {
-  color: var(--danger);
+  color: var(--danger-text);
 }
 
 .profile-more-menu .danger:hover {
@@ -1638,7 +1644,7 @@ section:hover {
   .profile-actions {
     width: 100%;
     margin-left: 0;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     justify-content: flex-start;
   }
 
@@ -1656,8 +1662,7 @@ section:hover {
   }
 }
 
-@media (max-width: 680px) {
-
+@media (max-width: 760px) {
   .workspace-layout {
     grid-template-columns: 1fr;
   }
@@ -1677,7 +1682,9 @@ section:hover {
   .workspace-batch-actions .btn {
     width: auto;
   }
+}
 
+@media (max-width: 680px) {
   .container {
     padding: 24px 16px;
   }
