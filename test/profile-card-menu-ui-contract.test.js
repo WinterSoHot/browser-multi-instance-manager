@@ -6,6 +6,26 @@ const path = require('node:path');
 const renderer = path.join(__dirname, '..', 'renderer');
 const html = fs.readFileSync(path.join(renderer, 'index.html'), 'utf8');
 const source = fs.readFileSync(path.join(renderer, 'index.js'), 'utf8');
+const styles = fs.readFileSync(path.join(renderer, 'styles.css'), 'utf8');
+
+function extractRule(css, selector) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, 'u'));
+  return match ? match[1] : '';
+}
+
+function extractRuleContaining(css, selector, declaration) {
+  let start = 0;
+  while (start < css.length) {
+    const selectorStart = css.indexOf(selector, start);
+    if (selectorStart === -1) return '';
+    const ruleEnd = css.indexOf('}', selectorStart);
+    const rule = ruleEnd === -1 ? '' : css.slice(selectorStart, ruleEnd + 1);
+    if (rule.includes(declaration)) return rule;
+    start = selectorStart + selector.length;
+  }
+  return '';
+}
 
 test('profile More menu module loads before the renderer entry point', () => {
   assert.ok(html.indexOf('profile-card-menu.js') < html.indexOf('index.js'));
@@ -19,6 +39,15 @@ test('rendered cards expose direct actions and an accessible More menu', () => {
   for (const action of ['open-folder', 'profile-size', 'clone', 'rename', 'delete']) {
     assert.match(source, new RegExp(`role="menuitem"[^>]*data-profile-action="${action}"`, 'u'));
   }
+});
+
+test('profile More menu escapes card bounds and separates danger actions', () => {
+  const card = extractRuleContaining(styles, '.profile-card', 'display: flex');
+  const menu = extractRule(styles, '.profile-more-menu');
+  assert.match(card, /overflow:\s*visible;/u);
+  assert.match(menu, /position:\s*absolute;/u);
+  assert.match(menu, /z-index:\s*[2-9]\d*;/u);
+  assert.match(styles, /\.profile-more-menu\s+\.danger\s*\{[^}]*color:\s*var\(--danger/u);
 });
 
 test('menu closes without selecting its card', () => {

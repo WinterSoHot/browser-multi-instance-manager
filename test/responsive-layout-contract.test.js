@@ -14,6 +14,19 @@ function extractRule(css, selector) {
   return match ? match[1] : '';
 }
 
+function extractRuleContaining(css, selector, declaration) {
+  let start = 0;
+  while (start < css.length) {
+    const selectorStart = css.indexOf(selector, start);
+    if (selectorStart === -1) return '';
+    const ruleEnd = css.indexOf('}', selectorStart);
+    const rule = ruleEnd === -1 ? '' : css.slice(selectorStart, ruleEnd + 1);
+    if (rule.includes(declaration)) return rule;
+    start = selectorStart + selector.length;
+  }
+  return '';
+}
+
 function extractMediaBlock(css, mediaQuery) {
   const mediaStart = css.indexOf(`@media (${mediaQuery})`);
   if (mediaStart === -1) return '';
@@ -49,15 +62,30 @@ test('grid-view profile names keep a bounded width for ellipsis', () => {
   assert.match(gridProfileNameRule, /width:\s*100%;/u);
 });
 
+test('list cards keep a compact row and move the complete action group when needed', () => {
+  const card = extractRuleContaining(styles, '.profile-card', 'display: flex');
+  const info = extractRule(styles, '.profile-info');
+  const actions = extractRule(styles, '.profile-actions');
+  assert.match(card, /flex-wrap:\s*wrap;/u);
+  assert.match(card, /align-items:\s*center;/u);
+  assert.match(info, /flex:\s*1 1 360px;/u);
+  assert.match(actions, /flex-wrap:\s*nowrap;/u);
+  assert.match(actions, /margin-left:\s*auto;/u);
+  assert.doesNotMatch(card, /flex-direction:\s*column;/u);
+});
+
 test('compact and narrow breakpoints prevent horizontal card overflow', () => {
   const compactStyles = extractMediaBlock(styles, 'max-width: 900px');
   const narrowStyles = extractMediaBlock(styles, 'max-width: 680px');
-  assert.match(compactStyles, /\.profile-card\s*\{[^}]*flex-direction:\s*column;/u);
+  assert.match(compactStyles, /\.profile-actions\s*\{[^}]*width:\s*100%;[^}]*margin-left:\s*0;/u);
   assert.match(compactStyles, /\.profile-actions\s+\.btn\s*\{[^}]*min-height:\s*36px;/u);
   assert.match(compactStyles, /\.header-actions\s+\.btn\s*,\s*\.sort-control\s+select\s*\{[^}]*min-height:\s*36px;/u);
   assert.match(narrowStyles, /\.workspace-layout\s*\{[^}]*grid-template-columns:\s*1fr;/u);
   assert.match(narrowStyles, /\.workspace-sidebar\s*\{[^}]*position:\s*static;/u);
   assert.match(narrowStyles, /\.workspace-filter-list,\s*\.workspace-custom-list,\s*\.workspace-batch-actions\s*\{[^}]*flex-direction:\s*row;[^}]*flex-wrap:\s*wrap;/u);
+  assert.doesNotMatch(narrowStyles, /\.profile-card\s*\{[^}]*flex-direction:\s*column;/u);
+  assert.match(narrowStyles, /\.profile-actions\s*\{[^}]*flex-wrap:\s*wrap;/u);
+  assert.match(narrowStyles, /\.profile-actions\s*>\s*\*\s*\{[^}]*min-height:\s*36px;/u);
 });
 
 test('profiles section keeps its decorative overlay inside the visible menu area', () => {

@@ -946,6 +946,8 @@ section:hover {
 /* Profile Card - Compact */
 .profile-card {
   display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   padding: 14px 16px;
@@ -955,7 +957,11 @@ section:hover {
   transition: all var(--transition);
   cursor: pointer;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
+}
+
+.profile-card:has(.profile-more-trigger[aria-expanded="true"]) {
+  z-index: 20;
 }
 
 /* Browser brand color top border with glow */
@@ -1056,7 +1062,8 @@ section:hover {
   display: flex;
   align-items: center;
   gap: 14px;
-  flex: 1;
+  flex: 1 1 360px;
+  width: auto;
   min-width: 0;
 }
 
@@ -1116,8 +1123,11 @@ section:hover {
 
 .profile-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  width: auto;
+  margin-left: auto;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   flex-shrink: 0;
   opacity: 0.7;
@@ -1145,6 +1155,75 @@ section:hover {
   padding: 7px 12px;
   font-size: 13px;
   font-weight: 600;
+}
+
+.profile-more {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.profile-more-trigger {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+}
+
+.profile-more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  max-height: min(60vh, 360px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-hover);
+}
+
+.profile-more-menu button {
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.profile-more-menu button:hover {
+  background: var(--primary-lighter);
+  color: var(--primary);
+}
+
+.profile-more-menu button:focus-visible {
+  outline: 3px solid var(--primary-light);
+  outline-offset: -1px;
+}
+
+.profile-more-separator {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border-light);
+}
+
+.profile-more-menu .danger {
+  color: var(--danger);
+}
+
+.profile-more-menu .danger:hover {
+  background: var(--danger-light);
+  color: var(--danger-hover);
 }
 
 /* Action button hover effects */
@@ -1204,10 +1283,11 @@ section:hover {
   width: 100%;
   justify-content: center;
   flex-wrap: wrap;
+  margin-left: 0;
   margin-top: auto;
 }
 
-.profiles-list.view-grid .profile-actions .btn {
+.profiles-list.view-grid .profile-actions .btn:not(.profile-more-trigger) {
   flex: 1;
   min-width: 70px;
   font-size: 12px;
@@ -1544,18 +1624,9 @@ section:hover {
     text-align: center;
   }
 
-  .profile-card {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .profile-info,
   .profile-actions {
     width: 100%;
-  }
-
-  .profile-actions {
+    margin-left: 0;
     justify-content: flex-start;
   }
 
@@ -1651,18 +1722,16 @@ section:hover {
     text-align: center;
   }
 
-  .profile-card {
-    flex-direction: column;
-    gap: 16px;
-    align-items: flex-start;
-  }
-
   .profile-actions {
     width: 100%;
     flex-wrap: wrap;
   }
 
-  .profile-actions .btn {
+  .profile-actions > * {
+    min-height: 36px;
+  }
+
+  .profile-actions .btn:not(.profile-more-trigger) {
     flex: 1;
     min-width: 70px;
   }
