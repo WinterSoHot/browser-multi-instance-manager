@@ -1193,6 +1193,10 @@ section:hover {
   box-shadow: var(--shadow-hover);
 }
 
+.profile-more-menu[hidden] {
+  display: none;
+}
+
 .profile-more-menu button {
   width: 100%;
   min-height: 36px;
@@ -1262,6 +1266,7 @@ section:hover {
 .profiles-list.view-grid .profile-card {
   flex-direction: column;
   align-items: flex-start;
+  min-width: 0;
   gap: 16px;
   min-height: 160px;
   padding: 22px;
@@ -1757,7 +1762,7 @@ section:hover {
   }
 
   .profiles-list.view-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

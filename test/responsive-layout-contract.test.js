@@ -67,6 +67,11 @@ test('grid-view identity resets the list card flex basis', () => {
   assert.match(gridProfileInfoRule, /flex:\s*0 1 auto;/u);
 });
 
+test('grid cards can shrink below long profile and action content', () => {
+  const gridCardRule = extractRule(styles, '.profiles-list.view-grid .profile-card');
+  assert.match(gridCardRule, /min-width:\s*0;/u);
+});
+
 test('workspace tags stay bounded inside visible-overflow cards', () => {
   const workspaceTagRule = extractRule(styles, '.workspace-tag');
   assert.match(workspaceTagRule, /min-width:\s*0;/u);
@@ -95,6 +100,7 @@ test('compact and narrow breakpoints prevent horizontal card overflow', () => {
   assert.match(compactStyles, /\.profile-actions\s+\.btn\s*\{[^}]*min-height:\s*36px;/u);
   assert.match(compactStyles, /\.header-actions\s+\.btn\s*,\s*\.sort-control\s+select\s*\{[^}]*min-height:\s*36px;/u);
   assert.match(narrowStyles, /\.workspace-layout\s*\{[^}]*grid-template-columns:\s*1fr;/u);
+  assert.match(narrowStyles, /\.profiles-list\.view-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/u);
   assert.match(narrowStyles, /\.workspace-sidebar\s*\{[^}]*position:\s*static;/u);
   assert.match(narrowStyles, /\.workspace-filter-list,\s*\.workspace-custom-list,\s*\.workspace-batch-actions\s*\{[^}]*flex-direction:\s*row;[^}]*flex-wrap:\s*wrap;/u);
   assert.doesNotMatch(narrowStyles, /\.profile-card\s*\{[^}]*flex-direction:\s*column;/u);

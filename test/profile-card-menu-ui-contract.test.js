@@ -50,6 +50,11 @@ test('profile More menu escapes card bounds and separates danger actions', () =>
   assert.match(styles, /\.profile-more-menu\s+\.danger\s*\{[^}]*color:\s*var\(--danger/u);
 });
 
+test('hidden profile More menus have no painted display geometry', () => {
+  const hiddenMenuRule = extractRule(styles, '.profile-more-menu[hidden]');
+  assert.match(hiddenMenuRule, /display:\s*none;/u);
+});
+
 test('menu closes without selecting its card', () => {
   assert.match(source, /data-profile-menu-trigger[\s\S]*stopPropagation\(\)/u);
   assert.match(source, /pointerdown[\s\S]*closeProfileCardMenu/u);
