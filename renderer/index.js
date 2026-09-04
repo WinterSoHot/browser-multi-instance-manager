@@ -855,7 +855,8 @@ function getBrowserIcon(browserType) {
 // Add new profile
 document.getElementById('addProfileForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (e.currentTarget.dataset.busy === 'true') return;
+  const form = e.currentTarget;
+  if (form.dataset.busy === 'true') return;
 
   const browserType = document.getElementById('browserType').value;
   const profileName = document.getElementById('profileName').value.trim();
@@ -865,8 +866,8 @@ document.getElementById('addProfileForm').addEventListener('submit', async (e) =
     return;
   }
 
-  const submitButton = e.currentTarget.querySelector('[type="submit"]');
-  e.currentTarget.dataset.busy = 'true';
+  const submitButton = form.querySelector('[type="submit"]');
+  form.dataset.busy = 'true';
   submitButton.disabled = true;
   try {
     const result = await window.browserAPI.addProfile(browserType, profileName);
@@ -885,7 +886,7 @@ document.getElementById('addProfileForm').addEventListener('submit', async (e) =
   } catch {
     showToast('新建配置失败，请重试', 'error');
   } finally {
-    delete e.currentTarget.dataset.busy;
+    delete form.dataset.busy;
     submitButton.disabled = false;
   }
 });
