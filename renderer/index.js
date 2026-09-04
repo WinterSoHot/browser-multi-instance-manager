@@ -22,6 +22,10 @@ const {
   sanitizeBatchResult,
 } = window.workspaceBatch;
 const {
+  createProfileCardMenuState,
+  nextProfileCardMenuItemIndex,
+} = window.profileCardMenu;
+const {
   createBatchMenuState,
   createProfileBatchOrganizer,
   getOrganizationActionFocusTarget,
@@ -30,6 +34,7 @@ const {
   nextMenuItemIndex,
 } = window.profileBatchOrganizer;
 const batchMenuState = createBatchMenuState();
+const profileCardMenuState = createProfileCardMenuState();
 const {
   buildImportDecisions,
   createImportPreviewState,
@@ -293,6 +298,7 @@ function getStatusMarkup(profile, statusMembership) {
 // Render profiles list
 function renderProfiles() {
   const profilesList = document.getElementById('profilesList');
+  closeProfileCardMenu({ restoreFocus: false });
   const snapshot = profileState.getSnapshot();
   const { filter, query, selectedIds } = snapshot;
   const selectedProfiles = new Set(selectedIds);
@@ -336,11 +342,20 @@ function renderProfiles() {
             ${getWorkspaceOptions(profile.workspaceId)}
           </select>
         </label>
-        <button class="btn btn-secondary btn-small" data-profile-action="open-folder" data-profile-id="${escapeHtml(profile.id)}">文件夹</button>
-        <button class="btn btn-secondary btn-small" data-profile-action="profile-size" data-profile-id="${escapeHtml(profile.id)}">大小</button>
-        <button class="btn btn-secondary btn-small" data-profile-action="clone" data-profile-id="${escapeHtml(profile.id)}">新建空白副本</button>
-        <button class="btn btn-warning btn-small" data-profile-action="rename" data-profile-id="${escapeHtml(profile.id)}">重命名</button>
-        <button class="btn btn-danger btn-small" data-profile-action="delete" data-profile-id="${escapeHtml(profile.id)}">删除</button>
+        <div class="profile-more">
+          <button type="button" class="btn btn-secondary btn-small profile-more-trigger"
+            data-profile-menu-trigger data-profile-id="${escapeHtml(profile.id)}"
+            aria-haspopup="menu" aria-expanded="false"
+            aria-label="${escapeHtml(profile.name)} 的更多操作">•••</button>
+          <div class="profile-more-menu" data-profile-menu role="menu" hidden>
+            <button type="button" role="menuitem" data-profile-action="open-folder" data-profile-id="${escapeHtml(profile.id)}">打开文件夹</button>
+            <button type="button" role="menuitem" data-profile-action="profile-size" data-profile-id="${escapeHtml(profile.id)}">查看占用大小</button>
+            <button type="button" role="menuitem" data-profile-action="clone" data-profile-id="${escapeHtml(profile.id)}">新建空白副本</button>
+            <span class="profile-more-separator" role="separator"></span>
+            <button type="button" role="menuitem" data-profile-action="rename" data-profile-id="${escapeHtml(profile.id)}">重命名</button>
+            <button type="button" role="menuitem" class="danger" data-profile-action="delete" data-profile-id="${escapeHtml(profile.id)}">删除配置</button>
+          </div>
+        </div>
       </div>
       <div class="selected-badge">✓</div>
     </div>
@@ -538,7 +553,71 @@ function runWorkspaceBatch(action) {
   return pageBatchCoordinator.run(() => performWorkspaceBatch(action));
 }
 
-document.getElementById('profilesList').addEventListener('click', (event) => {
+function findProfileCardMenuTrigger(profileId) {
+  return Array.from(document.querySelectorAll('[data-profile-menu-trigger]'))
+    .find((trigger) => trigger.dataset.profileId === profileId) || null;
+}
+
+function getProfileCardMenuItems(menu) {
+  return Array.from(menu.querySelectorAll('[role="menuitem"]'))
+    .filter((item) => !item.disabled);
+}
+
+function closeProfileCardMenu({ restoreFocus } = { restoreFocus: false }) {
+  const { openProfileId } = profileCardMenuState.getSnapshot();
+  if (openProfileId === null) return;
+  const trigger = findProfileCardMenuTrigger(openProfileId);
+  const menu = trigger?.closest('.profile-more')?.querySelector('[data-profile-menu]');
+  profileCardMenuState.close();
+  if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  if (menu) menu.hidden = true;
+  if (restoreFocus && trigger?.isConnected) trigger.focus();
+}
+
+function openProfileCardMenu(profileId, trigger) {
+  const { openProfileId } = profileCardMenuState.getSnapshot();
+  if (openProfileId === profileId) {
+    closeProfileCardMenu({ restoreFocus: false });
+    return false;
+  }
+  closeProfileCardMenu({ restoreFocus: false });
+  profileCardMenuState.toggle(profileId);
+  const menu = trigger.closest('.profile-more')?.querySelector('[data-profile-menu]');
+  trigger.setAttribute('aria-expanded', 'true');
+  if (menu) menu.hidden = false;
+  return true;
+}
+
+function handleProfileCardMenuKeydown(event) {
+  const menuItem = event.target.closest('[role="menuitem"]');
+  const menu = event.target.closest('[data-profile-menu]');
+  if (!menu || !menuItem || !menu.contains(menuItem)) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeProfileCardMenu({ restoreFocus: true });
+    return;
+  }
+  const items = getProfileCardMenuItems(menu);
+  const nextIndex = nextProfileCardMenuItemIndex(items.indexOf(menuItem), event.key, items.length);
+  if (nextIndex === null) return;
+  event.preventDefault();
+  items[nextIndex].focus();
+}
+
+const profilesList = document.getElementById('profilesList');
+
+profilesList.addEventListener('click', (event) => {
+  const trigger = event.target.closest('[data-profile-menu-trigger]');
+  if (trigger && profilesList.contains(trigger)) {
+    event.stopPropagation();
+    const opened = openProfileCardMenu(trigger.dataset.profileId, trigger);
+    if (opened && event.detail === 0) {
+      const menu = trigger.closest('.profile-more')?.querySelector('[data-profile-menu]');
+      getProfileCardMenuItems(menu)[0]?.focus();
+    }
+    return;
+  }
+
   const button = event.target.closest('[data-profile-action]');
   if (!button) {
     const card = event.target.closest('.profile-card');
@@ -549,6 +628,9 @@ document.getElementById('profilesList').addEventListener('click', (event) => {
   }
 
   const profileId = button.dataset.profileId;
+  if (button.closest('[data-profile-menu]')) {
+    closeProfileCardMenu({ restoreFocus: false });
+  }
   const actions = {
     launchBrowserOnly,
     closeBrowserOnly,
@@ -567,6 +649,17 @@ document.getElementById('profilesList').addEventListener('click', (event) => {
     void Promise.resolve(action(profileId, button)).catch(() => {
       showToast('操作失败，请重试', 'error');
     });
+  }
+});
+
+profilesList.addEventListener('keydown', handleProfileCardMenuKeydown);
+
+document.addEventListener('pointerdown', (event) => {
+  const { openProfileId } = profileCardMenuState.getSnapshot();
+  const trigger = openProfileId === null ? null : findProfileCardMenuTrigger(openProfileId);
+  const menuGroup = trigger?.closest('.profile-more');
+  if (menuGroup && !menuGroup.contains(event.target)) {
+    closeProfileCardMenu({ restoreFocus: false });
   }
 });
 
