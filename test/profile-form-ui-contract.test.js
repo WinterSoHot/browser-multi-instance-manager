@@ -12,9 +12,10 @@ function getAddProfileSubmitHandler() {
 }
 
 function getFinallyBlock(handler) {
-  const start = handler.indexOf('} finally {');
-  const end = handler.indexOf('\n  }\n});', start) + '\n  }'.length;
-  return handler.slice(start, end);
+  const normalizedHandler = handler.replace(/\r\n?/gu, '\n');
+  const start = normalizedHandler.indexOf('} finally {');
+  const end = normalizedHandler.indexOf('\n  }\n});', start) + '\n  }'.length;
+  return normalizedHandler.slice(start, end);
 }
 
 test('add-profile submit preserves its form reference across profile creation', () => {
@@ -26,6 +27,15 @@ test('add-profile submit preserves its form reference across profile creation', 
   assert.ok(capture >= 0, 'the submit handler captures the form before async work');
   assert.ok(capture < addProfile, 'the form capture happens before profile creation awaits');
   assert.doesNotMatch(handler.slice(addProfile), /e\.currentTarget/u);
+  assert.ok(finallyBlock.startsWith('} finally {'));
+  assert.match(finallyBlock, /delete form\.dataset\.busy;/u);
+  assert.match(finallyBlock, /submitButton\.disabled = false;/u);
+});
+
+test('add-profile submit contract accepts CRLF source checkouts', () => {
+  const crlfHandler = getAddProfileSubmitHandler().replace(/\n/gu, '\r\n');
+  const finallyBlock = getFinallyBlock(crlfHandler);
+
   assert.ok(finallyBlock.startsWith('} finally {'));
   assert.match(finallyBlock, /delete form\.dataset\.busy;/u);
   assert.match(finallyBlock, /submitButton\.disabled = false;/u);
