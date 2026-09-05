@@ -33,7 +33,9 @@ test('add-profile submit preserves its form reference across profile creation', 
 });
 
 test('add-profile submit contract accepts CRLF source checkouts', () => {
-  const crlfHandler = getAddProfileSubmitHandler().replace(/\n/gu, '\r\n');
+  const crlfHandler = getAddProfileSubmitHandler()
+    .replace(/\r\n?/gu, '\n')
+    .replace(/\n/gu, '\r\n');
   const finallyBlock = getFinallyBlock(crlfHandler);
 
   assert.ok(finallyBlock.startsWith('} finally {'));
