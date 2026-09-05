@@ -344,6 +344,13 @@ function renderProfiles() {
             ${getWorkspaceOptions(profile.workspaceId)}
           </select>
         </label>
+        <span class="profile-expanded-actions">
+          <button type="button" class="btn btn-secondary btn-small" data-profile-action="open-folder" data-profile-id="${escapeHtml(profile.id)}">文件夹</button>
+          <button type="button" class="btn btn-secondary btn-small" data-profile-action="profile-size" data-profile-id="${escapeHtml(profile.id)}">占用大小</button>
+          <button type="button" class="btn btn-secondary btn-small" data-profile-action="clone" data-profile-id="${escapeHtml(profile.id)}">新建空白副本</button>
+          <button type="button" class="btn btn-secondary btn-small" data-profile-action="rename" data-profile-id="${escapeHtml(profile.id)}">重命名</button>
+          <button type="button" class="btn btn-secondary btn-small profile-delete-action" data-profile-action="delete" data-profile-id="${escapeHtml(profile.id)}">删除</button>
+        </span>
         <div class="profile-more">
           <button type="button" class="btn btn-secondary btn-small profile-more-trigger"
             data-profile-menu-trigger data-profile-id="${escapeHtml(profile.id)}"
@@ -1704,6 +1711,25 @@ document.addEventListener('pointerdown', (event) => {
 });
 
 window.addEventListener('resize', updateOrganizationMenuViewportBounds);
+let focusedProfileMenuId = null;
+document.addEventListener('focusin', (event) => {
+  focusedProfileMenuId = event.target.closest('.profile-more')
+    ?.querySelector('[data-profile-menu-trigger]')?.dataset.profileId || null;
+});
+window.addEventListener('resize', () => {
+  const { openProfileId } = profileCardMenuState.getSnapshot();
+  if (openProfileId === null) return;
+  const trigger = findProfileCardMenuTrigger(openProfileId);
+  const card = trigger?.closest('.profile-card');
+  const hadMenuFocus = focusedProfileMenuId === openProfileId;
+  closeProfileCardMenu();
+  if (hadMenuFocus) {
+    const target = trigger?.getClientRects().length
+      ? trigger
+      : card?.querySelector('.profile-expanded-actions button');
+    target?.focus();
+  }
+});
 
 // Initialize
 void loadProfiles().catch(() => {
